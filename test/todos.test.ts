@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
+import todosExtension from "../extensions/todos/index.ts";
 import {
   applyTodoAction,
   emptyTodoState,
@@ -53,4 +54,46 @@ test("validates todo operations without mutating the prior state", () => {
 test("recognizes persisted todo state", () => {
   assert.equal(isTodoState({ items: [], nextId: 1 }), true);
   assert.equal(isTodoState({ items: [{ id: 1, text: "x" }], nextId: 2 }), false);
+});
+
+test("hides the todo widget while the list is empty", async () => {
+  const lifecycle = new Map<string, (event: unknown, ctx: any) => Promise<void>>();
+  let tool: any;
+  let widgetFactory: any;
+  const api = {
+    events: { emit() {} },
+    on(name: string, handler: (event: unknown, ctx: any) => Promise<void>) {
+      lifecycle.set(name, handler);
+    },
+    registerTool(value: any) {
+      tool = value;
+    },
+    registerCommand() {},
+  };
+  todosExtension(api as any);
+
+  await lifecycle.get("session_start")?.({}, {
+    mode: "tui",
+    sessionManager: { getBranch: () => [] },
+    ui: {
+      setWidget(_key: string, factory: any) {
+        widgetFactory = factory;
+      },
+    },
+  });
+
+  const component = widgetFactory(
+    { requestRender() {} },
+    {
+      fg: (_color: string, value: string) => value,
+      strikethrough: (value: string) => value,
+    },
+  );
+  assert.deepEqual(component.render(80), []);
+
+  await tool.execute("call-1", { action: "add", text: "Visible" });
+  assert.match(component.render(80).join("\n"), /Visible/);
+
+  await tool.execute("call-2", { action: "clear" });
+  assert.deepEqual(component.render(80), []);
 });

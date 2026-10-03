@@ -1,19 +1,20 @@
 import { realpath } from "node:fs/promises";
 import path from "node:path";
 import {
+  CustomEditor,
   parseSkillBlock,
   type ExtensionAPI,
 } from "@earendil-works/pi-coding-agent";
 import {
+  Input,
+  matchesKey,
   truncateToWidth,
   visibleWidth,
   wrapTextWithAnsi,
 } from "@earendil-works/pi-tui";
 import { readSkillName } from "../monorepo-skills/core.ts";
 import {
-  formatDuration,
   formatOpenAiUsageState,
-  usageWindowResetSeconds,
   type OpenAiUsageState,
   type UsageWindow,
 } from "../openai-usage/core.ts";
@@ -38,12 +39,61 @@ import {
 
 const WIDGET_KEY = "mypi-resource-status";
 
+interface SessionRowControls {
+  isSelected(): boolean;
+  select(): void;
+  deselect(): void;
+  edit(): void;
+}
+
+class SessionNavigationEditor extends CustomEditor {
+  private readonly sessionRow: SessionRowControls;
+
+  constructor(
+    tui: ConstructorParameters<typeof CustomEditor>[0],
+    theme: ConstructorParameters<typeof CustomEditor>[1],
+    keybindings: ConstructorParameters<typeof CustomEditor>[2],
+    sessionRow: SessionRowControls,
+  ) {
+    super(tui, theme, keybindings);
+    this.sessionRow = sessionRow;
+  }
+
+  handleInput(data: string): void {
+    if (this.sessionRow.isSelected()) {
+      if (matchesKey(data, "enter")) {
+        this.sessionRow.edit();
+        return;
+      }
+      if (matchesKey(data, "up") || matchesKey(data, "escape")) {
+        this.sessionRow.deselect();
+        return;
+      }
+      if (matchesKey(data, "down")) return;
+
+      this.sessionRow.deselect();
+      super.handleInput(data);
+      return;
+    }
+
+    if (matchesKey(data, "down") && this.getText().length === 0) {
+      this.sessionRow.select();
+      return;
+    }
+
+    super.handleInput(data);
+  }
+}
+
 export default function resourceStatus(pi: ExtensionAPI) {
   const extensions = new Map<string, ExtensionLoadedPayload>();
   const skills = new Map<string, string>();
   const loadedSkillPaths = new Set<string>();
   let loadedAgentDirectories: string[] = [];
   let openAiUsage: OpenAiUsageState = { status: "inactive" };
+  let sessionName: string | undefined;
+  let sessionRowSelected = false;
+  let editingSessionName = false;
   let requestRender: (() => void) | undefined;
 
   const refresh = () => requestRender?.();
@@ -142,7 +192,14 @@ export default function resourceStatus(pi: ExtensionAPI) {
     },
   });
 
+  pi.on("session_info_changed", async (event) => {
+    sessionName = event.name;
+    refresh();
+  });
+
   pi.on("session_start", async (_event, ctx) => {
+    sessionName = pi.getSessionName();
+    sessionRowSelected = false;
     loadedSkillPaths.clear();
     for (const entry of ctx.sessionManager.getBranch()) {
       if (entry.type !== "custom" || entry.customType !== SKILL_LOADED_EVENT) {
@@ -161,6 +218,49 @@ export default function resourceStatus(pi: ExtensionAPI) {
 
     if (ctx.mode !== "tui") return;
 
+    ctx.ui.setFooter(() => ({
+      invalidate() {},
+      render(): string[] {
+        return [];
+      },
+    }));
+
+    const setSessionRowSelected = (selected: boolean) => {
+      sessionRowSelected = selected;
+      refresh();
+    };
+    const editSessionName = async () => {
+      if (editingSessionName) return;
+      editingSessionName = true;
+      try {
+        const nextName = await ctx.ui.custom<string | undefined>(
+          (_tui, theme, _keybindings, done) => {
+            const input = new Input({
+              prompt: theme.fg("accent", "Session: "),
+              placeholder: "unnamed",
+              placeholderStyle: (text) => theme.fg("dim", text),
+            });
+            input.setValue(sessionName ?? "");
+            input.onSubmit = (value) => done(value);
+            input.onEscape = () => done(undefined);
+            return input;
+          },
+        );
+        if (nextName !== undefined) pi.setSessionName(nextName.trim());
+      } finally {
+        editingSessionName = false;
+        setSessionRowSelected(false);
+      }
+    };
+    ctx.ui.setEditorComponent((tui, theme, keybindings) =>
+      new SessionNavigationEditor(tui, theme, keybindings, {
+        isSelected: () => sessionRowSelected,
+        select: () => setSessionRowSelected(true),
+        deselect: () => setSessionRowSelected(false),
+        edit: () => void editSessionName(),
+      }),
+    );
+
     ctx.ui.setWidget(
       WIDGET_KEY,
       (tui, theme) => {
@@ -171,14 +271,33 @@ export default function resourceStatus(pi: ExtensionAPI) {
             requestRender = undefined;
           },
           render(width: number): string[] {
+            const availableWidth = Math.max(1, width);
             const extensionLabels = sortedUniqueLabels([...extensions.values()]);
+            const sessionText = `Session: ${sessionName || "unnamed"}`;
+            const truncatedSessionText = truncateToWidth(
+              sessionText,
+              availableWidth,
+              "",
+            );
+            const sessionLine = sessionRowSelected
+              ? theme.bg(
+                  "selectedBg",
+                  truncatedSessionText +
+                    " ".repeat(
+                      Math.max(
+                        0,
+                        availableWidth - visibleWidth(truncatedSessionText),
+                      ),
+                    ),
+                )
+              : theme.fg("dim", truncatedSessionText);
             const skillEntries = [...skills.entries()]
               .filter(([skillPath]) => loadedSkillPaths.has(skillPath))
               .sort((left, right) => left[1].localeCompare(right[1]));
             const extensionLine = resourceSummary("Extensions", extensionLabels);
             const agentDirectoriesLine =
               loadedAgentDirectories.length === 0
-                ? theme.fg("dim", resourceSummary("Agent dirs", []))
+                ? undefined
                 : theme.fg(
                     "dim",
                     `Agent dirs (${loadedAgentDirectories.length}): `,
@@ -190,14 +309,13 @@ export default function resourceStatus(pi: ExtensionAPI) {
                     .join(theme.fg("dim", " · "));
             const skillLine =
               skillEntries.length === 0
-                ? theme.fg("dim", resourceSummary("Skills", []))
+                ? undefined
                 : theme.fg("dim", `Skills (${skillEntries.length}): `) +
                   skillEntries
                     .map(([, name]) =>
                       theme.bg("selectedBg", theme.fg("text", name)),
                     )
                     .join(theme.fg("dim", " · "));
-            const availableWidth = Math.max(1, width);
             const usage = ctx.getContextUsage();
             const contextWindow = usage?.contextWindow ?? ctx.model?.contextWindow;
             let contextLine: string;
@@ -240,39 +358,32 @@ export default function resourceStatus(pi: ExtensionAPI) {
                 openAiUsage.snapshot.primary,
                 openAiUsage.snapshot.secondary,
               ].filter((window): window is UsageWindow => Boolean(window));
-              const plan = openAiUsage.snapshot.planType
-                ? ` (${openAiUsage.snapshot.planType})`
-                : "";
 
               if (windows.length === 0) {
-                openAiLines.push(theme.fg("dim", `OpenAI${plan}: limits unavailable`));
+                openAiLines.push(theme.fg("dim", "OpenAI limits unavailable"));
               } else {
                 for (const window of windows) {
-                  const remaining =
-                    window.remainingPercent ??
-                    (window.usedPercent === undefined
+                  const used =
+                    window.usedPercent ??
+                    (window.remainingPercent === undefined
                       ? null
-                      : 100 - window.usedPercent);
-                  const percentLabel =
-                    remaining === null
-                      ? "?%"
-                      : `${remaining >= 10 ? remaining.toFixed(0) : remaining.toFixed(1)}%`;
-                  const reset = formatDuration(
-                    usageWindowResetSeconds(window, Date.now()),
+                      : 100 - window.remainingPercent);
+                  const label = window.label.replace(/^./, (character) =>
+                    character.toUpperCase(),
                   );
-                  const prefix = `OpenAI${plan} ${window.label} [`;
-                  const suffix = `] ${percentLabel} left${reset ? ` · ↻${reset}` : ""}`;
+                  const prefix = `${label} [`;
+                  const suffix = "]";
                   const progress = progressBar(
-                    remaining,
+                    used,
                     availableWidth,
                     visibleWidth(prefix) + visibleWidth(suffix),
                   );
                   const color =
                     progress.percent === null
                       ? "dim"
-                      : progress.percent <= 10
+                      : progress.percent >= 90
                         ? "error"
-                        : progress.percent <= 30
+                        : progress.percent >= 70
                           ? "warning"
                           : "success";
                   openAiLines.push(
@@ -302,15 +413,17 @@ export default function resourceStatus(pi: ExtensionAPI) {
             }
 
             return [
+              sessionLine,
               ...wrapTextWithAnsi(
                 theme.fg("dim", extensionLine),
                 availableWidth,
               ),
-              ...wrapTextWithAnsi(
-                theme.fg("dim", agentDirectoriesLine),
-                availableWidth,
-              ),
-              ...wrapTextWithAnsi(skillLine, availableWidth),
+              ...(agentDirectoriesLine
+                ? wrapTextWithAnsi(agentDirectoriesLine, availableWidth)
+                : []),
+              ...(skillLine
+                ? wrapTextWithAnsi(skillLine, availableWidth)
+                : []),
               truncateToWidth(contextLine, availableWidth),
               ...openAiLines,
             ];
@@ -328,6 +441,10 @@ export default function resourceStatus(pi: ExtensionAPI) {
 
   pi.on("session_shutdown", async (_event, ctx) => {
     requestRender = undefined;
-    if (ctx.mode === "tui") ctx.ui.setWidget(WIDGET_KEY, undefined);
+    if (ctx.mode === "tui") {
+      ctx.ui.setWidget(WIDGET_KEY, undefined);
+      ctx.ui.setFooter(undefined);
+      ctx.ui.setEditorComponent(undefined);
+    }
   });
 }

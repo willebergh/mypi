@@ -51,6 +51,8 @@ test("renders and refreshes the below-editor resource widget", async () => {
   const bus = new Map<string, Array<(data: unknown) => void>>();
   let widgetFactory: any;
   let widgetOptions: any;
+  let footerFactory: any;
+  let editorFactory: any;
   let renders = 0;
 
   const events = {
@@ -67,6 +69,8 @@ test("renders and refreshes the below-editor resource widget", async () => {
   const api = {
     events,
     appendEntry() {},
+    getSessionName: () => "Refactor auth",
+    setSessionName() {},
     registerCommand() {},
     on(name: string, handler: (event: any, ctx: any) => Promise<any>) {
       const handlers = lifecycle.get(name) ?? [];
@@ -96,6 +100,15 @@ test("renders and refreshes the below-editor resource widget", async () => {
         widgetFactory = factory;
         widgetOptions = options;
       },
+      setFooter(factory: any) {
+        footerFactory = factory;
+      },
+      setEditorComponent(factory: any) {
+        editorFactory = factory;
+      },
+      async input() {
+        return undefined;
+      },
     },
   };
   for (const handler of lifecycle.get("session_start") ?? []) {
@@ -103,6 +116,8 @@ test("renders and refreshes the below-editor resource widget", async () => {
   }
 
   assert.deepEqual(widgetOptions, { placement: "belowEditor" });
+  assert.equal(typeof editorFactory, "function");
+  assert.deepEqual(footerFactory().render(200), []);
   const component = widgetFactory(
     { requestRender: () => renders++ },
     {
@@ -111,22 +126,21 @@ test("renders and refreshes the below-editor resource widget", async () => {
     },
   );
   assert.deepEqual(component.render(200), [
+    "Session: Refactor auth",
     "Extensions (2): nested-agents · resource-status",
-    "Agent dirs (0): none",
-    "Skills (0): none",
     "Context [████████████████░░░░░░░░░░░░░░░░] 50.0% · 136k/272k",
   ]);
 
   events.emit(NESTED_AGENTS_CHANGED_EVENT, {
     files: ["packages/ui/AGENTS.md"],
   });
-  assert.equal(component.render(200)[1], "Agent dirs (1): {packages/ui}");
+  assert.equal(component.render(200)[2], "Agent dirs (1): {packages/ui}");
 
   events.emit(SKILL_LOADED_EVENT, {
     name: "shadcn",
     path: "/repo/packages/ui/.agents/skills/shadcn/SKILL.md",
   });
-  assert.equal(component.render(200)[2], "Skills (1): {shadcn}");
+  assert.equal(component.render(200)[3], "Skills (1): {shadcn}");
 
   events.emit(SKILLS_CHANGED_EVENT, {
     skills: [
@@ -138,7 +152,7 @@ test("renders and refreshes the below-editor resource widget", async () => {
     ],
   });
   assert.equal(renders, 3);
-  assert.equal(component.render(200)[2], "Skills (1): {shadcn}");
+  assert.equal(component.render(200)[3], "Skills (1): {shadcn}");
 
   events.emit(OPENAI_USAGE_CHANGED_EVENT, {
     status: "ready",
@@ -159,8 +173,8 @@ test("renders and refreshes the below-editor resource widget", async () => {
   });
   assert.equal(renders, 4);
   assert.deepEqual(component.render(200).slice(-2), [
-    "OpenAI (plus) 5h [████████████████████████░░░░░░░░] 75% left · ↻2h",
-    "OpenAI (plus) weekly [████████░░░░░░░░░░░░░░░░░░░░░░░░] 25% left · ↻3d",
+    "5h [████████░░░░░░░░░░░░░░░░░░░░░░░░]",
+    "Weekly [████████████████████████░░░░░░░░]",
   ]);
 
   const wrapped = component.render(24);

@@ -70,6 +70,8 @@ export default function todosExtension(pi: ExtensionAPI) {
             requestRender = undefined;
           },
           render(width: number): string[] {
+            if (state.items.length === 0) return [];
+
             const availableWidth = Math.max(1, width);
             const completed = state.items.filter((item) => item.completed).length;
             const lines = [
@@ -81,11 +83,6 @@ export default function todosExtension(pi: ExtensionAPI) {
                 availableWidth,
               ),
             ];
-
-            if (state.items.length === 0) {
-              lines.push(theme.fg("dim", "  none"));
-              return lines;
-            }
 
             for (const item of state.items) {
               const marker = item.completed
