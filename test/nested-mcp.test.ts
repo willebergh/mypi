@@ -29,7 +29,12 @@ async function fixture() {
     JSON.stringify({
       mcpServers: {
         "Astro docs": { type: "http", url: "https://mcp.docs.astro.build/mcp" },
-        unsupported: { command: "node" },
+        "next-devtools": {
+          command: "npx",
+          args: ["-y", "next-devtools-mcp@latest"],
+          env: { NEXT_TELEMETRY_DISABLED: "1" },
+        },
+        malformed: { command: "node", args: [42] },
       },
     }),
   );
@@ -40,25 +45,34 @@ async function fixture() {
   return root;
 }
 
-test("discovers scoped SSE and HTTP servers and reports unsupported transports", async () => {
+test("discovers scoped stdio, SSE, and HTTP servers and reports malformed definitions", async () => {
   const root = await fixture();
   const discovery = await discoverNestedMcp(root);
 
   assert.equal(discovery.root, root);
   assert.deepEqual(
     discovery.servers.map((server) => server.id).sort(),
-    ["apps/docs:Astro docs", "apps/website:astro"],
+    ["apps/docs:Astro docs", "apps/docs:next-devtools", "apps/website:astro"],
   );
   assert.equal(
     discovery.servers.find((server) => server.id === "apps/docs:Astro docs")?.definition.type,
     "http",
+  );
+  assert.deepEqual(
+    discovery.servers.find((server) => server.id === "apps/docs:next-devtools")?.definition,
+    {
+      type: "stdio",
+      command: "npx",
+      args: ["-y", "next-devtools-mcp@latest"],
+      env: { NEXT_TELEMETRY_DISABLED: "1" },
+    },
   );
   assert.equal(
     discovery.servers.find((server) => server.id === "apps/website:astro")?.scopeLabel,
     "apps/website",
   );
   assert.equal(discovery.diagnostics.length, 1);
-  assert.match(discovery.diagnostics[0]!.message, /unsupported .*transport/);
+  assert.match(discovery.diagnostics[0]!.message, /args must be an array of strings/);
 });
 
 test("activates a server only for paths in its subtree", async () => {
@@ -73,7 +87,7 @@ test("activates a server only for paths in its subtree", async () => {
   );
   assert.deepEqual(
     applicableMcpServers(discovery.servers, docsTargets).map((server) => server.id),
-    ["apps/docs:Astro docs"],
+    ["apps/docs:Astro docs", "apps/docs:next-devtools"],
   );
 });
 
@@ -137,7 +151,11 @@ test("asks before activating a nested server and blocks the first mutation", asy
   assert.equal(confirmations, 1);
   assert.equal(entries[0]?.customType, "nested-mcp-approval");
   assert.deepEqual(messages[0]?.message.details.servers, [
-    { id: "apps/website:astro", url: "http://localhost:4321/__mcp/sse" },
+    {
+      id: "apps/website:astro",
+      transport: "sse",
+      location: "http://localhost:4321/__mcp/sse",
+    },
   ]);
 
   const status = await registeredTool.execute(

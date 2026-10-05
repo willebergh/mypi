@@ -2,6 +2,7 @@ import { createHash } from "node:crypto";
 import path from "node:path";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { SSEClientTransport } from "@modelcontextprotocol/sdk/client/sse.js";
+import { StdioClientTransport, getDefaultEnvironment } from "@modelcontextprotocol/sdk/client/stdio.js";
 import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/streamableHttp.js";
 import type { Transport } from "@modelcontextprotocol/sdk/shared/transport.js";
 import { Type } from "@earendil-works/pi-ai";
@@ -59,15 +60,26 @@ function formatError(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
 }
 
+function serverLocation(server: ScopedMcpServer): string {
+  const definition = server.definition;
+  return definition.type === "stdio"
+    ? [definition.command, ...definition.args].join(" ")
+    : definition.url;
+}
+
 function activationMessage(servers: ScopedMcpServer[]) {
   return {
     customType: "nested-mcp-activated",
     content: `## Newly available MCP servers\n\nThe following path-scoped MCP servers are now available through the \`mcp\` tool. Use \`action: \"tools\"\` to inspect their tools before calling one.\n\n${servers
-      .map((server) => `- **${server.id}** — ${server.definition.url}`)
+      .map((server) => `- **${server.id}** — ${serverLocation(server)}`)
       .join("\n")}`,
     display: false,
     details: {
-      servers: servers.map((server) => ({ id: server.id, url: server.definition.url })),
+      servers: servers.map((server) => ({
+        id: server.id,
+        transport: server.definition.type,
+        location: serverLocation(server),
+      })),
     },
   };
 }
@@ -99,7 +111,7 @@ export default function nestedMcp(pi: ExtensionAPI) {
 
     const allowed = await ctx.ui.confirm(
       `Enable nested MCP server “${server.name}”?`,
-      `Configuration: ${toPosix(path.relative(root, server.configFile))}\nScope: ${server.scopeLabel}\nEndpoint: ${server.definition.url}\n\nThe server can return untrusted content and expose tools that make changes. Only approve endpoints you trust.`,
+      `Configuration: ${toPosix(path.relative(root, server.configFile))}\nScope: ${server.scopeLabel}\nTransport: ${server.definition.type}\n${server.definition.type === "stdio" ? "Command" : "Endpoint"}: ${serverLocation(server)}\n\n${server.definition.type === "stdio" ? "This starts a local process. " : ""}The server can return untrusted content and expose tools that make changes. Only approve servers you trust.`,
     );
     if (!allowed) {
       denied.add(server.id);
@@ -170,11 +182,24 @@ export default function nestedMcp(pi: ExtensionAPI) {
 
     const promise = (async () => {
       const client = new Client({ name: "mypi-nested-mcp", version: "0.1.0" });
-      const endpoint = new URL(server.definition.url);
-      const transport: Transport =
-        server.definition.type === "http"
-          ? new StreamableHTTPClientTransport(endpoint)
-          : new SSEClientTransport(endpoint);
+      const definition = server.definition;
+      let transport: Transport;
+      if (definition.type === "stdio") {
+        transport = new StdioClientTransport({
+          command: definition.command,
+          args: definition.args,
+          cwd: server.scopeRoot,
+          env: definition.env
+            ? { ...getDefaultEnvironment(), ...definition.env }
+            : undefined,
+        });
+      } else {
+        const endpoint = new URL(definition.url);
+        transport =
+          definition.type === "http"
+            ? new StreamableHTTPClientTransport(endpoint)
+            : new SSEClientTransport(endpoint);
+      }
       try {
         await client.connect(transport, { signal, timeout: 30_000 });
       } catch (error) {
@@ -237,7 +262,7 @@ export default function nestedMcp(pi: ExtensionAPI) {
             : servers
                 .map(
                   (server) =>
-                    `${server.id}\n  scope: ${server.scopeLabel}\n  transport: ${server.definition.type}\n  url: ${server.definition.url}\n  connected: ${connections.has(server.id) ? "yes" : "no"}`,
+                    `${server.id}\n  scope: ${server.scopeLabel}\n  transport: ${server.definition.type}\n  ${server.definition.type === "stdio" ? "command" : "url"}: ${serverLocation(server)}\n  connected: ${connections.has(server.id) ? "yes" : "no"}`,
                 )
                 .join("\n\n");
         return {

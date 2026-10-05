@@ -43,9 +43,9 @@ The extension deliberately does not apply other nested Pi settings. Glob and neg
 
 Discovers `.mcp.json` files across a repository and activates their servers only when the initial working directory, a prompt path, or a built-in file/search/shell tool enters the file's subtree. The first mutating tool call is blocked once so the activation notice reaches the model before the mutation is retried.
 
-This is a deliberately minimal, first-party MCP client rather than a dependency on a third-party Pi MCP extension. It supports unauthenticated SSE and Streamable HTTP servers with HTTP(S) URLs, including configs whose type is `"http"` or `"streamable-http"`. Stdio commands, OAuth, custom headers, MCP resources, and MCP prompts are rejected or unsupported.
+This is a deliberately minimal, first-party MCP client rather than a dependency on a third-party Pi MCP extension. It supports stdio commands plus unauthenticated SSE and Streamable HTTP servers with HTTP(S) URLs, including configs whose type is `"http"` or `"streamable-http"`. Stdio processes run with the `.mcp.json` directory as their working directory; configured environment variables are merged with the SDK's safe default environment. OAuth, custom HTTP headers, MCP resources, and MCP prompts remain unsupported.
 
-Every server requires an explicit approval dialog before activation. Approval is stored in the Pi session against a hash of the scoped server definition; changing its name, scope, transport, or URL requires approval again. Unapproved servers remain disabled in headless sessions. Nested scans do not follow symbolic-link directories.
+Every server requires an explicit approval dialog before activation. Approval is stored in the Pi session against a hash of the scoped server definition; changing its name, scope, transport, URL, or command requires approval again. Unapproved servers remain disabled in headless sessions. Nested scans do not follow symbolic-link directories.
 
 Servers connect lazily through the `mcp` gateway tool. Use `action: "servers"` to inspect active servers, `action: "tools"` to connect and discover tools, and `action: "call"` to invoke one. Scoped IDs such as `apps/website:astro` avoid collisions between identically named servers in different applications. `/mcp-status` shows the active set.
 

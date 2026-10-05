@@ -18,10 +18,17 @@ const IGNORED_DIRECTORIES = new Set([
   ".turbo",
 ]);
 
-export interface McpServerDefinition {
-  type: "sse" | "http";
-  url: string;
-}
+export type McpServerDefinition =
+  | {
+      type: "sse" | "http";
+      url: string;
+    }
+  | {
+      type: "stdio";
+      command: string;
+      args: string[];
+      env?: Record<string, string>;
+    };
 
 export interface ScopedMcpServer {
   id: string;
@@ -54,10 +61,39 @@ function parseServer(name: string, raw: unknown): McpServerDefinition {
   }
 
   const record = raw as Record<string, unknown>;
-  if (record.command !== undefined) {
-    throw new Error(
-      `server ${JSON.stringify(name)} uses unsupported stdio transport; only SSE is supported`,
-    );
+  if (record.command !== undefined || record.type === "stdio") {
+    if (record.type !== undefined && record.type !== "stdio") {
+      throw new Error(
+        `server ${JSON.stringify(name)} declares ${JSON.stringify(record.type)} but provides a stdio command`,
+      );
+    }
+    if (record.url !== undefined) {
+      throw new Error(`server ${JSON.stringify(name)} must not provide both a URL and command`);
+    }
+    if (typeof record.command !== "string" || record.command.trim() === "") {
+      throw new Error(`stdio server ${JSON.stringify(name)} must have a command`);
+    }
+    if (
+      record.args !== undefined &&
+      (!Array.isArray(record.args) || record.args.some((arg) => typeof arg !== "string"))
+    ) {
+      throw new Error(`stdio server ${JSON.stringify(name)} args must be an array of strings`);
+    }
+    if (
+      record.env !== undefined &&
+      (!record.env ||
+        typeof record.env !== "object" ||
+        Array.isArray(record.env) ||
+        Object.values(record.env).some((value) => typeof value !== "string"))
+    ) {
+      throw new Error(`stdio server ${JSON.stringify(name)} env must contain only string values`);
+    }
+    return {
+      type: "stdio",
+      command: record.command,
+      args: (record.args as string[] | undefined) ?? [],
+      env: record.env as Record<string, string> | undefined,
+    };
   }
   if (
     record.type !== undefined &&
@@ -66,11 +102,11 @@ function parseServer(name: string, raw: unknown): McpServerDefinition {
     record.type !== "streamable-http"
   ) {
     throw new Error(
-      `server ${JSON.stringify(name)} uses unsupported transport ${JSON.stringify(record.type)}; only SSE and Streamable HTTP are supported`,
+      `server ${JSON.stringify(name)} uses unsupported transport ${JSON.stringify(record.type)}; supported transports are stdio, SSE, and Streamable HTTP`,
     );
   }
   if (typeof record.url !== "string" || record.url.trim() === "") {
-    throw new Error(`server ${JSON.stringify(name)} must have a URL`);
+    throw new Error(`server ${JSON.stringify(name)} must have a URL or command`);
   }
 
   let url: URL;
