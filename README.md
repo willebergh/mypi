@@ -19,6 +19,12 @@ Large scrape responses are truncated in model context and saved in full to a tem
 
 The `axios` override in `package.json` is intentional: the Firecrawl SDK currently pins an older vulnerable release. Remove the override once Firecrawl ships with a patched Axios dependency.
 
+### Context viewer
+
+Adds `/context-viewer`, a full-height read-only view of Pi's effective system prompt. This is the instruction text assembled from Pi's base prompt, applicable context files such as `AGENTS.md`, tool guidance, and the skill catalog. It deliberately excludes user prompts, assistant replies, tool results, tool-schema JSON, and other diagnostic metadata.
+
+In regular TUI mode, use the terminal's native scrollback or mouse/trackpad to scroll through the full rendered prompt. Press Escape or `q` to close. Native terminal scrollback is unavailable in fullscreen/alternate-screen mode.
+
 ### Nested AGENTS.md
 
 Loads nested `AGENTS.md` instructions when Pi starts working with a path in their subtree. Pi already loads the root and ancestor `AGENTS.md` files; this extension adds the nested, path-scoped behavior.
