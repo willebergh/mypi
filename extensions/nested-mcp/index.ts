@@ -1,4 +1,3 @@
-import { createHash } from "node:crypto";
 import path from "node:path";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { SSEClientTransport } from "@modelcontextprotocol/sdk/client/sse.js";
@@ -16,7 +15,10 @@ import { announceExtension } from "../resource-status/protocol.ts";
 import {
   applicableMcpServers,
   discoverNestedMcp,
+  mcpApprovalHash,
+  readMcpAutoApprovals,
   resolveReferencedTargets,
+  saveMcpAutoApproval,
   type ScopedMcpServer,
 } from "./core.ts";
 
@@ -35,12 +37,6 @@ interface McpToolDetails {
   servers?: string[];
   server?: string;
   tool?: string;
-}
-
-function approvalHash(server: ScopedMcpServer): string {
-  return createHash("sha256")
-    .update(JSON.stringify({ id: server.id, definition: server.definition }))
-    .digest("hex");
 }
 
 function boundedText(text: string): string {
@@ -105,9 +101,9 @@ export default function nestedMcp(pi: ExtensionAPI) {
     server: ScopedMcpServer,
     ctx: ExtensionContext,
   ): Promise<boolean> => {
-    const hash = approvalHash(server);
+    const hash = mcpApprovalHash(server);
     if (approvedHashes.has(hash)) return true;
-    if (denied.has(server.id) || !ctx.hasUI) return false;
+    if (denied.has(server.id) || !ctx.hasUI || ctx.mode === "rpc") return false;
 
     const allowed = await ctx.ui.confirm(
       `Enable nested MCP server “${server.name}”?`,
@@ -119,6 +115,14 @@ export default function nestedMcp(pi: ExtensionAPI) {
     }
 
     approvedHashes.add(hash);
+    try {
+      await saveMcpAutoApproval(root, server.id, hash);
+    } catch (error) {
+      ctx.ui.notify(
+        `Nested MCP could not save ${path.join(".pi", ".mcp.auto.json")}: ${formatError(error)}`,
+        "warning",
+      );
+    }
     pi.appendEntry(APPROVAL_ENTRY, {
       hash,
       id: server.id,
@@ -383,8 +387,13 @@ export default function nestedMcp(pi: ExtensionAPI) {
     const discovery = await discoverNestedMcp(ctx.cwd);
     root = discovery.root;
     catalog = new Map(discovery.servers.map((server) => [server.id, server]));
+    const autoState = ctx.isProjectTrusted()
+      ? await readMcpAutoApprovals(root)
+      : { approvals: new Map<string, string>() };
+    for (const hash of autoState.approvals.values()) approvedHashes.add(hash);
     announceExtension(pi.events, { id: "nested-mcp", label: "nested-mcp" });
 
+    if (autoState.warning) ctx.ui.notify(`Nested MCP ${autoState.warning}`, "warning");
     for (const diagnostic of discovery.diagnostics) {
       ctx.ui.notify(
         `Nested MCP ignored ${toPosix(path.relative(root, diagnostic.file))}: ${diagnostic.message}`,

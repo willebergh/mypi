@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { mkdtemp, mkdir, writeFile } from "node:fs/promises";
+import { mkdtemp, mkdir, readFile, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import test from "node:test";
@@ -7,7 +7,9 @@ import nestedMcp from "../extensions/nested-mcp/index.ts";
 import {
   applicableMcpServers,
   discoverNestedMcp,
+  readMcpAutoApprovals,
   resolveReferencedTargets,
+  saveMcpAutoApproval,
 } from "../extensions/nested-mcp/core.ts";
 
 async function fixture() {
@@ -75,6 +77,32 @@ test("discovers scoped stdio, SSE, and HTTP servers and reports malformed defini
   assert.match(discovery.diagnostics[0]!.message, /args must be an array of strings/);
 });
 
+test("persists project-scoped MCP approvals", async () => {
+  const root = await fixture();
+  const firstHash = "a".repeat(64);
+  const secondHash = "b".repeat(64);
+
+  await saveMcpAutoApproval(root, "apps/docs:Astro docs", firstHash);
+  await saveMcpAutoApproval(root, "apps/website:astro", secondHash);
+
+  const loaded = await readMcpAutoApprovals(root);
+  assert.equal(loaded.warning, undefined);
+  assert.deepEqual([...loaded.approvals], [
+    ["apps/docs:Astro docs", firstHash],
+    ["apps/website:astro", secondHash],
+  ]);
+  const file = JSON.parse(
+    await readFile(path.join(root, ".pi", ".mcp.auto.json"), "utf8"),
+  );
+  assert.deepEqual(file, {
+    version: 1,
+    approvals: {
+      "apps/docs:Astro docs": firstHash,
+      "apps/website:astro": secondHash,
+    },
+  });
+});
+
 test("activates a server only for paths in its subtree", async () => {
   const root = await fixture();
   const discovery = await discoverNestedMcp(root);
@@ -124,6 +152,7 @@ test("asks before activating a nested server and blocks the first mutation", asy
     cwd: root,
     hasUI: true,
     mode: "tui",
+    isProjectTrusted: () => true,
     sessionManager: { getBranch: () => [] },
     ui: {
       async confirm() {
@@ -150,6 +179,8 @@ test("asks before activating a nested server and blocks the first mutation", asy
   assert.equal(result.block, true);
   assert.equal(confirmations, 1);
   assert.equal(entries[0]?.customType, "nested-mcp-approval");
+  const saved = await readMcpAutoApprovals(root);
+  assert.equal(saved.approvals.get("apps/website:astro"), entries[0]?.data.hash);
   assert.deepEqual(messages[0]?.message.details.servers, [
     {
       id: "apps/website:astro",
@@ -173,4 +204,44 @@ test("asks before activating a nested server and blocks the first mutation", asy
   });
   assert.equal(retry, undefined);
   assert.equal(confirmations, 1);
+});
+
+test("does not request approval from RPC subagents", async () => {
+  const root = await fixture();
+  const handlers = new Map<string, Array<(event: any, context?: any) => Promise<any>>>();
+  let confirmations = 0;
+  const api = {
+    events: { emit() {} },
+    on(name: string, handler: (event: any, context?: any) => Promise<any>) {
+      const registered = handlers.get(name) ?? [];
+      registered.push(handler);
+      handlers.set(name, registered);
+      return () => undefined;
+    },
+    registerTool() {},
+    registerCommand() {},
+    appendEntry() {},
+  };
+  nestedMcp(api as any);
+  const context = {
+    cwd: root,
+    hasUI: true,
+    mode: "rpc",
+    isProjectTrusted: () => true,
+    sessionManager: { getBranch: () => [] },
+    ui: {
+      async confirm() {
+        confirmations += 1;
+        return true;
+      },
+      notify() {},
+    },
+  };
+  for (const handler of handlers.get("session_start") ?? []) {
+    await handler({ reason: "startup" }, context);
+  }
+  for (const handler of handlers.get("before_agent_start") ?? []) {
+    await handler({ prompt: "Inspect apps/website/src/page.astro" }, context);
+  }
+  assert.equal(confirmations, 0);
 });

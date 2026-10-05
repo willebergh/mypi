@@ -1,9 +1,94 @@
-import { realpath, readdir, readFile } from "node:fs/promises";
+import { createHash } from "node:crypto";
+import {
+  mkdir,
+  realpath,
+  readdir,
+  readFile,
+  rename,
+  unlink,
+  writeFile,
+} from "node:fs/promises";
 import path from "node:path";
 import { isInside, normalizeReferencedPath } from "../nested-agents/core.ts";
 import { findRepositoryRoot } from "../monorepo-skills/core.ts";
 
 export const MCP_FILENAME = ".mcp.json";
+export const MCP_AUTO_STATE_PATH = path.join(".pi", ".mcp.auto.json");
+
+interface McpAutoState {
+  version: 1;
+  approvals: Record<string, string>;
+}
+
+function parseMcpAutoState(value: unknown): Map<string, string> {
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    throw new Error("state must be a JSON object");
+  }
+  const record = value as Record<string, unknown>;
+  if (record.version !== 1) throw new Error("unsupported state version");
+  if (!record.approvals || typeof record.approvals !== "object" || Array.isArray(record.approvals)) {
+    throw new Error("approvals must be an object");
+  }
+  const approvals = new Map<string, string>();
+  for (const [id, hash] of Object.entries(record.approvals)) {
+    if (id && typeof hash === "string" && /^[a-f0-9]{64}$/u.test(hash)) {
+      approvals.set(id, hash);
+    }
+  }
+  return approvals;
+}
+
+export async function readMcpAutoApprovals(
+  root: string,
+): Promise<{ approvals: Map<string, string>; warning?: string }> {
+  const file = path.join(root, MCP_AUTO_STATE_PATH);
+  let text: string;
+  try {
+    text = await readFile(file, "utf8");
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") {
+      return { approvals: new Map() };
+    }
+    return {
+      approvals: new Map(),
+      warning: `could not read ${MCP_AUTO_STATE_PATH}: ${error instanceof Error ? error.message : String(error)}`,
+    };
+  }
+  try {
+    return { approvals: parseMcpAutoState(JSON.parse(text)) };
+  } catch (error) {
+    return {
+      approvals: new Map(),
+      warning: `ignored invalid ${MCP_AUTO_STATE_PATH}: ${error instanceof Error ? error.message : String(error)}`,
+    };
+  }
+}
+
+export async function saveMcpAutoApproval(
+  root: string,
+  id: string,
+  hash: string,
+): Promise<void> {
+  const directory = path.join(root, ".pi");
+  const file = path.join(root, MCP_AUTO_STATE_PATH);
+  const existing = await readMcpAutoApprovals(root);
+  existing.approvals.set(id, hash);
+  const state: McpAutoState = {
+    version: 1,
+    approvals: Object.fromEntries(
+      [...existing.approvals].sort(([left], [right]) => left.localeCompare(right)),
+    ),
+  };
+  await mkdir(directory, { recursive: true });
+  const temporary = `${file}.${process.pid}.${Date.now()}.tmp`;
+  try {
+    await writeFile(temporary, `${JSON.stringify(state, null, 2)}\n`, "utf8");
+    await rename(temporary, file);
+  } catch (error) {
+    await unlink(temporary).catch(() => undefined);
+    throw error;
+  }
+}
 
 const IGNORED_DIRECTORIES = new Set([
   ".git",
@@ -37,6 +122,12 @@ export interface ScopedMcpServer {
   configFile: string;
   scopeRoot: string;
   scopeLabel: string;
+}
+
+export function mcpApprovalHash(server: ScopedMcpServer): string {
+  return createHash("sha256")
+    .update(JSON.stringify({ id: server.id, definition: server.definition }))
+    .digest("hex");
 }
 
 export interface McpConfigDiagnostic {
