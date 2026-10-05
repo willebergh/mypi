@@ -66,9 +66,9 @@ The Astro development server must already be running; the MCP client connects to
 
 ### Resource status
 
-Shows a live widget below the editor with the personal-package extensions, injected agent directories, actually loaded skills, context usage, and provider limits reported by this package. Loaded agent directories and skills use the selected-background highlight. It refreshes when extensions announce themselves and whenever monorepo skill discovery runs during startup or `/reload`.
+Shows a live widget below the editor with injected agent directories, actually loaded skills, compact context usage, and provider limits reported by this package. Loaded agent directories and skills use the selected-background highlight. It refreshes whenever tracked resources change and whenever monorepo skill discovery runs during startup or `/reload`.
 
-Pi does not currently expose a public API for enumerating every third-party extension and native skill, so the widget intentionally reports resources participating in this package's event protocol.
+Extension participation is still tracked for the `/mypi-resources` command, but it is intentionally omitted from the always-visible widget. Pi does not currently expose a public API for enumerating every third-party extension and native skill.
 
 ### Ask user
 
@@ -85,6 +85,14 @@ Tracks the ChatGPT Codex subscription windows for the active `openai-codex` mode
 Usage refreshes when the session starts, after each turn, when the model changes, and every minute while an OpenAI Codex model is active. Use `/openai-usage refresh` for a manual refresh. Polling runs only in interactive TUI sessions and stops during shutdown or when another provider is selected.
 
 The ChatGPT usage endpoint is an undocumented service endpoint and may require parser updates if OpenAI changes its response format.
+
+### Subagents
+
+Adds a generic `subagent` tool for running up to eight independent tasks in isolated Pi RPC subprocesses, with at most four running concurrently by default. Tasks inherit the parent model, thinking level, working directory, and project trust decision unless explicitly overridden. Child sessions are ephemeral and cannot recursively invoke `subagent` or blocking interactive tools.
+
+A live below-editor widget shows each agent's activity and elapsed time, followed by a compact context bar and `A(N)`, `S(N)`, and `T(X/N)` counters for loaded agent files, loaded skills, and completed/total todos. It intentionally omits turn, raw token, and dollar-cost fields. Pressing Escape on the parent run propagates cancellation to active children. Subagents share the same working tree, so parallel tasks should not edit the same files.
+
+This first version runs inline in every terminal. Its worker/event model is intentionally independent of cmux so a later adapter can expose the same agents in visible cmux tabs without replacing the scheduler or widget.
 
 ## Development
 

@@ -19,11 +19,11 @@ import {
   type UsageWindow,
 } from "../openai-usage/core.ts";
 import {
-  contextProgress,
   progressBar,
   resourceSummary,
   sortedUniqueLabels,
 } from "./core.ts";
+import { renderCompactContextBar } from "./context-bar.ts";
 import {
   EXTENSION_LOADED_EVENT,
   NESTED_AGENTS_CHANGED_EVENT,
@@ -272,7 +272,6 @@ export default function resourceStatus(pi: ExtensionAPI) {
           },
           render(width: number): string[] {
             const availableWidth = Math.max(1, width);
-            const extensionLabels = sortedUniqueLabels([...extensions.values()]);
             const sessionText = `Session: ${sessionName || "unnamed"}`;
             const truncatedSessionText = truncateToWidth(
               sessionText,
@@ -294,7 +293,6 @@ export default function resourceStatus(pi: ExtensionAPI) {
             const skillEntries = [...skills.entries()]
               .filter(([skillPath]) => loadedSkillPaths.has(skillPath))
               .sort((left, right) => left[1].localeCompare(right[1]));
-            const extensionLine = resourceSummary("Extensions", extensionLabels);
             const agentDirectoriesLine =
               loadedAgentDirectories.length === 0
                 ? undefined
@@ -323,32 +321,13 @@ export default function resourceStatus(pi: ExtensionAPI) {
             if (!usage || !contextWindow) {
               contextLine = theme.fg("dim", "Context: unavailable");
             } else {
-              const progress = contextProgress(
-                { ...usage, contextWindow },
-                availableWidth,
-              );
-              const percentLabel =
-                progress.percent === null
-                  ? "?"
-                  : `${progress.percent.toFixed(1)}%`;
-              const color =
-                progress.percent === null
-                  ? "dim"
-                  : progress.percent >= 90
-                    ? "error"
-                    : progress.percent >= 70
-                      ? "warning"
-                      : "success";
               contextLine =
-                theme.fg("dim", "Context [") +
-                theme.fg(color, "█".repeat(progress.filled)) +
-                theme.fg(
-                  "dim",
-                  "░".repeat(progress.barWidth - progress.filled),
-                ) +
-                theme.fg(
-                  "dim",
-                  `] ${percentLabel} · ${progress.tokenLabel}`,
+                theme.fg("dim", "Context ") +
+                renderCompactContextBar(
+                  theme,
+                  usage.tokens,
+                  contextWindow,
+                  usage.percent,
                 );
             }
 
@@ -414,10 +393,6 @@ export default function resourceStatus(pi: ExtensionAPI) {
 
             return [
               sessionLine,
-              ...wrapTextWithAnsi(
-                theme.fg("dim", extensionLine),
-                availableWidth,
-              ),
               ...(agentDirectoriesLine
                 ? wrapTextWithAnsi(agentDirectoriesLine, availableWidth)
                 : []),

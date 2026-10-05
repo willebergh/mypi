@@ -27,10 +27,55 @@ export interface ContextProgress extends ProgressBar {
   tokenLabel: string;
 }
 
-function compactTokens(tokens: number): string {
+export function compactTokens(tokens: number): string {
   if (tokens < 1_000) return String(tokens);
   if (tokens < 10_000) return `${(tokens / 1_000).toFixed(1)}k`;
   return `${Math.round(tokens / 1_000)}k`;
+}
+
+export interface CompactContextBarLayout {
+  cells: string[];
+  filled: number;
+  percent: number | null;
+}
+
+export function compactContextBarLayout(
+  tokens: number | null,
+  contextWindow: number | undefined,
+  suppliedPercent?: number | null,
+): CompactContextBarLayout {
+  const width = 32;
+  if (!contextWindow || contextWindow <= 0) {
+    return { cells: Array(width).fill("░"), filled: 0, percent: null };
+  }
+  const calculatedPercent =
+    tokens !== null ? (tokens / contextWindow) * 100 : null;
+  const rawPercent = suppliedPercent === undefined ? calculatedPercent : suppliedPercent;
+  const percent =
+    rawPercent === null ? null : Math.max(0, Math.min(100, rawPercent));
+  const filled = percent === null ? 0 : Math.round((percent / 100) * width);
+  const cells: string[] = Array.from({ length: width }, (_, index) =>
+    index < filled ? "█" : "░",
+  );
+  const percentLabel = percent === null ? "?" : `${percent.toFixed(1)}%`;
+  const tokenLabel = `${tokens === null ? "?" : compactTokens(tokens)}/${compactTokens(contextWindow)}`;
+  for (const [index, character] of [...percentLabel].entries()) {
+    if (index + 3 < width) cells[index + 3] = character;
+  }
+  const tokenStart = Math.max(0, width - 3 - tokenLabel.length);
+  for (const [index, character] of [...tokenLabel].entries()) {
+    if (index + tokenStart < width) cells[index + tokenStart] = character;
+  }
+  return { cells, filled, percent };
+}
+
+export function compactContextBar(
+  tokens: number | null,
+  contextWindow: number | undefined,
+  suppliedPercent?: number | null,
+): string {
+  const layout = compactContextBarLayout(tokens, contextWindow, suppliedPercent);
+  return `[${layout.cells.join("")}]`;
 }
 
 export function progressBar(
