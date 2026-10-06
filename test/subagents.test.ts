@@ -6,7 +6,9 @@ import {
   compactContextBar,
   createSubagentState,
   formatElapsed,
+  formatSubagentCounters,
   parseSubagentTelemetry,
+  subagentCounterWidths,
 } from "../extensions/subagents/core.ts";
 import { mapWithConcurrency } from "../extensions/subagents/runner.ts";
 
@@ -81,6 +83,27 @@ test("formats compact context bars", () => {
   assert.equal(
     compactContextBar(271_728, 272_000),
     "[███99.9%████████████272k/272k███]",
+  );
+});
+
+test("aligns subagent resource counters", () => {
+  const first = createSubagentState(1, { task: "One" }, { cwd: "/repo" });
+  const second = createSubagentState(2, { task: "Two" }, { cwd: "/repo" });
+  first.agentFiles = 1;
+  first.loadedSkills = 12;
+  first.todosCompleted = 2;
+  first.todosTotal = 5;
+  second.agentFiles = 10;
+  second.loadedSkills = 3;
+  second.todosCompleted = 12;
+  second.todosTotal = 15;
+  const widths = subagentCounterWidths([first, second]);
+
+  assert.equal(formatSubagentCounters(first, widths), "A( 1) · S(12) · T( 2/ 5)");
+  assert.equal(formatSubagentCounters(second, widths), "A(10) · S( 3) · T(12/15)");
+  assert.equal(
+    formatSubagentCounters(first, widths).length,
+    formatSubagentCounters(second, widths).length,
   );
 });
 

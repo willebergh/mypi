@@ -256,6 +256,37 @@ export function formatElapsed(state: SubagentState, now = Date.now()): string {
   return `${minutes}m${String(seconds % 60).padStart(2, "0")}s`;
 }
 
+export interface SubagentCounterWidths {
+  agentFiles: number;
+  loadedSkills: number;
+  todosCompleted: number;
+  todosTotal: number;
+}
+
+export function subagentCounterWidths(
+  states: readonly SubagentState[],
+): SubagentCounterWidths {
+  const width = (values: number[]) =>
+    Math.max(1, ...values.map((value) => String(value).length));
+  return {
+    agentFiles: width(states.map((state) => state.agentFiles)),
+    loadedSkills: width(states.map((state) => state.loadedSkills)),
+    todosCompleted: width(states.map((state) => state.todosCompleted)),
+    todosTotal: width(states.map((state) => state.todosTotal)),
+  };
+}
+
+export function formatSubagentCounters(
+  state: SubagentState,
+  widths: SubagentCounterWidths,
+): string {
+  return [
+    `A(${String(state.agentFiles).padStart(widths.agentFiles)})`,
+    `S(${String(state.loadedSkills).padStart(widths.loadedSkills)})`,
+    `T(${String(state.todosCompleted).padStart(widths.todosCompleted)}/${String(state.todosTotal).padStart(widths.todosTotal)})`,
+  ].join(" · ");
+}
+
 export interface SubagentTelemetry {
   agentFiles: number;
   loadedSkills: number;

@@ -65,6 +65,7 @@ test("formats stable resource summaries", () => {
     styled,
     /<bg>1<\/bg><bg>3<\/bg><bg>6<\/bg><bg>k<\/bg><bg>\/<\/bg>/,
   );
+  assert.match(styled, /<bg> <\/bg>/);
 });
 
 test("renders and refreshes the below-editor resource widget", async () => {
@@ -149,7 +150,7 @@ test("renders and refreshes the below-editor resource widget", async () => {
   );
   assert.deepEqual(component.render(200), [
     "Session: Refactor auth",
-    "Context [███50.0%████████░░░░136k/272k░░░]",
+    "Context [███50.0%████████    136k/272k   ]",
   ]);
   assert.doesNotMatch(component.render(200).join("\n"), /Extensions/);
 
@@ -195,8 +196,8 @@ test("renders and refreshes the below-editor resource widget", async () => {
   });
   assert.equal(renders, 4);
   assert.deepEqual(component.render(200).slice(-2), [
-    "5h [████████░░░░░░░░░░░░░░░░░░░░░░░░]",
-    "Weekly [████████████████████████░░░░░░░░]",
+    "5h      [███25.0%                  ↻2h   ]",
+    "Weekly  [███75.0%████████████████  ↻3d   ]",
   ]);
 
   const wrapped = component.render(24);

@@ -39,34 +39,41 @@ export interface CompactContextBarLayout {
   percent: number | null;
 }
 
+export function compactProgressBarLayout(
+  percent: number | null,
+  rightLabel: string,
+): CompactContextBarLayout {
+  const width = 32;
+  const clamped =
+    percent === null ? null : Math.max(0, Math.min(100, percent));
+  const filled = clamped === null ? 0 : Math.round((clamped / 100) * width);
+  const cells: string[] = Array.from({ length: width }, (_, index) =>
+    index < filled ? "█" : "░",
+  );
+  const percentLabel = clamped === null ? "?%" : `${clamped.toFixed(1)}%`;
+  for (const [index, character] of [...percentLabel].entries()) {
+    if (index + 3 < width) cells[index + 3] = character;
+  }
+  const rightStart = Math.max(0, width - 3 - rightLabel.length);
+  for (const [index, character] of [...rightLabel].entries()) {
+    if (index + rightStart < width) cells[index + rightStart] = character;
+  }
+  return { cells, filled, percent: clamped };
+}
+
 export function compactContextBarLayout(
   tokens: number | null,
   contextWindow: number | undefined,
   suppliedPercent?: number | null,
 ): CompactContextBarLayout {
-  const width = 32;
   if (!contextWindow || contextWindow <= 0) {
-    return { cells: Array(width).fill("░"), filled: 0, percent: null };
+    return { cells: Array(32).fill("░"), filled: 0, percent: null };
   }
   const calculatedPercent =
     tokens !== null ? (tokens / contextWindow) * 100 : null;
-  const rawPercent = suppliedPercent === undefined ? calculatedPercent : suppliedPercent;
-  const percent =
-    rawPercent === null ? null : Math.max(0, Math.min(100, rawPercent));
-  const filled = percent === null ? 0 : Math.round((percent / 100) * width);
-  const cells: string[] = Array.from({ length: width }, (_, index) =>
-    index < filled ? "█" : "░",
-  );
-  const percentLabel = percent === null ? "?" : `${percent.toFixed(1)}%`;
+  const percent = suppliedPercent === undefined ? calculatedPercent : suppliedPercent;
   const tokenLabel = `${tokens === null ? "?" : compactTokens(tokens)}/${compactTokens(contextWindow)}`;
-  for (const [index, character] of [...percentLabel].entries()) {
-    if (index + 3 < width) cells[index + 3] = character;
-  }
-  const tokenStart = Math.max(0, width - 3 - tokenLabel.length);
-  for (const [index, character] of [...tokenLabel].entries()) {
-    if (index + tokenStart < width) cells[index + tokenStart] = character;
-  }
-  return { cells, filled, percent };
+  return compactProgressBarLayout(percent, tokenLabel);
 }
 
 export function compactContextBar(

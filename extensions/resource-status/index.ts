@@ -14,16 +14,20 @@ import {
 } from "@earendil-works/pi-tui";
 import { readSkillName } from "../monorepo-skills/core.ts";
 import {
+  formatDuration,
   formatOpenAiUsageState,
+  usageWindowResetSeconds,
   type OpenAiUsageState,
   type UsageWindow,
 } from "../openai-usage/core.ts";
 import {
-  progressBar,
   resourceSummary,
   sortedUniqueLabels,
 } from "./core.ts";
-import { renderCompactContextBar } from "./context-bar.ts";
+import {
+  renderCompactContextBar,
+  renderCompactProgressBar,
+} from "./context-bar.ts";
 import {
   EXTENSION_LOADED_EVENT,
   NESTED_AGENTS_CHANGED_EVENT,
@@ -350,30 +354,18 @@ export default function resourceStatus(pi: ExtensionAPI) {
                   const label = window.label.replace(/^./, (character) =>
                     character.toUpperCase(),
                   );
-                  const prefix = `${label} [`;
-                  const suffix = "]";
-                  const progress = progressBar(
-                    used,
-                    availableWidth,
-                    visibleWidth(prefix) + visibleWidth(suffix),
+                  const reset = formatDuration(
+                    usageWindowResetSeconds(window, Date.now()),
                   );
-                  const color =
-                    progress.percent === null
-                      ? "dim"
-                      : progress.percent >= 90
-                        ? "error"
-                        : progress.percent >= 70
-                          ? "warning"
-                          : "success";
+                  const prefix = `${label.padEnd(7)} `;
                   openAiLines.push(
                     truncateToWidth(
                       theme.fg("dim", prefix) +
-                        theme.fg(color, "█".repeat(progress.filled)) +
-                        theme.fg(
-                          "dim",
-                          "░".repeat(progress.barWidth - progress.filled),
-                        ) +
-                        theme.fg("dim", suffix),
+                        renderCompactProgressBar(
+                          theme,
+                          used,
+                          `↻${reset ?? "?"}`,
+                        ),
                       availableWidth,
                     ),
                   );

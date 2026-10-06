@@ -4,9 +4,8 @@ import {
   type ExtensionAPI,
   type ExtensionContext,
   type RpcClient,
-  type Theme,
 } from "@earendil-works/pi-coding-agent";
-import { Text, truncateToWidth, wrapTextWithAnsi } from "@earendil-works/pi-tui";
+import { Text, truncateToWidth, visibleWidth } from "@earendil-works/pi-tui";
 import {
   announceExtension,
   NESTED_AGENTS_CHANGED_EVENT,
@@ -19,6 +18,8 @@ import {
   cloneSubagentState,
   createSubagentState,
   formatElapsed,
+  formatSubagentCounters,
+  subagentCounterWidths,
   SUBAGENT_TELEMETRY_STATUS_KEY,
   type SubagentState,
   type SubagentTask,
@@ -91,20 +92,11 @@ function statusIcon(state: SubagentState): string {
   }
 }
 
-function stateSummary(state: SubagentState, theme: Theme): string {
-  const beforeBar = [state.activity];
+function activitySummary(state: SubagentState): string {
+  const parts = [state.activity];
   const elapsed = formatElapsed(state);
-  if (elapsed) beforeBar.push(elapsed);
-  const counters = [
-    `A(${state.agentFiles})`,
-    `S(${state.loadedSkills})`,
-    `T(${state.todosCompleted}/${state.todosTotal})`,
-  ];
-  return (
-    theme.fg("dim", `${beforeBar.join(" · ")} · `) +
-    renderCompactContextBar(theme, state.contextTokens, state.contextWindow) +
-    theme.fg("dim", ` · ${counters.join(" · ")}`)
-  );
+  if (elapsed) parts.push(elapsed);
+  return parts.join(" · ");
 }
 
 function registerChildTelemetry(pi: ExtensionAPI): void {
@@ -252,6 +244,7 @@ export default function subagentsExtension(pi: ExtensionAPI) {
               ),
             ];
 
+            const counterWidths = subagentCounterWidths(states);
             for (const state of states) {
               const color =
                 state.status === "completed"
@@ -266,11 +259,42 @@ export default function subagentsExtension(pi: ExtensionAPI) {
                 " " +
                 theme.fg("accent", state.label) +
                 theme.fg("dim", "  ");
+              const left = prefix + theme.fg("dim", activitySummary(state));
+              const right =
+                renderCompactContextBar(
+                  theme,
+                  state.contextTokens,
+                  state.contextWindow,
+                ) +
+                theme.fg(
+                  "dim",
+                  ` · ${formatSubagentCounters(state, counterWidths)}`,
+                );
+              const rightWidth = visibleWidth(right);
+              const minimumGap = 2;
+
+              if (rightWidth + minimumGap >= availableWidth) {
+                lines.push(truncateToWidth(left, availableWidth, "…"));
+                const rightLine = truncateToWidth(right, availableWidth, "");
+                lines.push(
+                  " ".repeat(
+                    Math.max(0, availableWidth - visibleWidth(rightLine)),
+                  ) + rightLine,
+                );
+                continue;
+              }
+
+              const truncatedLeft = truncateToWidth(
+                left,
+                availableWidth - rightWidth - minimumGap,
+                "…",
+              );
               lines.push(
-                ...wrapTextWithAnsi(
-                  prefix + stateSummary(state, theme),
-                  availableWidth,
-                ),
+                truncatedLeft +
+                  " ".repeat(
+                    availableWidth - visibleWidth(truncatedLeft) - rightWidth,
+                  ) +
+                  right,
               );
             }
             return lines;
@@ -387,6 +411,7 @@ export default function subagentsExtension(pi: ExtensionAPI) {
         const content = result.content[0];
         return new Text(content?.type === "text" ? content.text : "", 0, 0);
       }
+      const counterWidths = subagentCounterWidths(details.states);
       const lines = details.states.map((state) => {
         const color =
           state.status === "completed"
@@ -394,7 +419,19 @@ export default function subagentsExtension(pi: ExtensionAPI) {
             : state.status === "failed" || state.status === "aborted"
               ? "error"
               : "warning";
-        return `${theme.fg(color, statusIcon(state))} ${theme.fg("accent", state.label)} ${theme.fg("dim", "  ")}${stateSummary(state, theme)}`;
+        return (
+          `${theme.fg(color, statusIcon(state))} ${theme.fg("accent", state.label)}  ` +
+          theme.fg("dim", `${activitySummary(state)} · `) +
+          renderCompactContextBar(
+            theme,
+            state.contextTokens,
+            state.contextWindow,
+          ) +
+          theme.fg(
+            "dim",
+            ` · ${formatSubagentCounters(state, counterWidths)}`,
+          )
+        );
       });
       return new Text(lines.join("\n"), 0, 0);
     },
