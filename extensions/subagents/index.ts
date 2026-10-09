@@ -46,7 +46,10 @@ const TaskParameters = Type.Object({
     Type.String({ description: "Working directory; defaults to the parent session cwd" }),
   ),
   model: Type.Optional(
-    Type.String({ description: "Model pattern; defaults to the parent session model" }),
+    Type.String({
+      description:
+        "Model pattern selected for this task; omit only to intentionally inherit the parent model",
+    }),
   ),
   thinking: Type.Optional(ThinkingLevel),
   tools: Type.Optional(
@@ -327,6 +330,7 @@ export default function subagentsExtension(pi: ExtensionAPI) {
     promptSnippet: "Delegate independent tasks to isolated generic coding agents",
     promptGuidelines: [
       "Use subagent for independent parallel research or clearly separable implementation work; keep each delegated task self-contained and avoid parallel edits to the same files.",
+      "Select each subagent's model deliberately from these available choices: openai-codex/gpt-6-luna for focused, straightforward, high-volume work where speed and cost matter most; openai-codex/gpt-6.1-sol for a strong balance of intelligence and cost, including most complex work; openai-codex/gpt-6-astra for the most demanding reasoning, coding, or judgment. Set model explicitly based on the task. Do not inherit the parent model merely by default; omit model only when using the parent model is an intentional choice.",
     ],
     parameters: SubagentParameters,
     executionMode: "sequential",

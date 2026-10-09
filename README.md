@@ -94,7 +94,7 @@ The ChatGPT usage endpoint is an undocumented service endpoint and may require p
 
 ### Subagents
 
-Adds a generic `subagent` tool for running up to eight independent tasks in isolated Pi RPC subprocesses, with at most four running concurrently by default. Tasks inherit the parent model, thinking level, working directory, and project trust decision unless explicitly overridden. Child sessions are ephemeral and cannot recursively invoke `subagent` or blocking interactive tools.
+Adds a generic `subagent` tool for running up to eight independent tasks in isolated Pi RPC subprocesses, with at most four running concurrently by default. The parent is instructed to choose explicitly among `openai-codex/gpt-6-luna` for focused, cost-sensitive work, `openai-codex/gpt-6.1-sol` for a strong intelligence/cost balance, and `openai-codex/gpt-6-astra` for the most demanding reasoning and coding. Omitting the model intentionally inherits the parent model. Tasks also inherit the parent thinking level, working directory, and project trust decision unless explicitly overridden. Child sessions are ephemeral and cannot recursively invoke `subagent` or blocking interactive tools.
 
 A live below-editor widget shows each agent's activity and elapsed time, followed by a compact context bar and `A(N)`, `S(N)`, and `T(X/N)` counters for loaded agent files, loaded skills, and completed/total todos. It intentionally omits turn, raw token, and dollar-cost fields. Pressing Escape on the parent run propagates cancellation to active children. Subagents share the same working tree, so parallel tasks should not edit the same files.
 
