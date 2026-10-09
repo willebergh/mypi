@@ -319,20 +319,29 @@ export default function resourceStatus(pi: ExtensionAPI) {
                     )
                     .join(theme.fg("dim", " · "));
             const usage = ctx.getContextUsage();
-            const contextWindow = usage?.contextWindow ?? ctx.model?.contextWindow;
+            const model = ctx.model;
+            const modelName =
+              model && ["openai", "openai-codex"].includes(model.provider)
+                ? model.id.replace(/^gpt-/, "")
+                : model?.id;
+            const contextWindow = usage?.contextWindow ?? model?.contextWindow;
             let contextLine: string;
 
             if (!usage || !contextWindow) {
-              contextLine = theme.fg("dim", "Context: unavailable");
+              contextLine = theme.fg(
+                "dim",
+                modelName
+                  ? `Context unavailable · ${modelName}`
+                  : "Context unavailable",
+              );
             } else {
-              contextLine =
-                theme.fg("dim", "Context ") +
-                renderCompactContextBar(
-                  theme,
-                  usage.tokens,
-                  contextWindow,
-                  usage.percent,
-                );
+              contextLine = renderCompactContextBar(
+                theme,
+                usage.tokens,
+                contextWindow,
+                usage.percent,
+                modelName ?? "Model",
+              );
             }
 
             const openAiLines: string[] = [];
@@ -357,15 +366,14 @@ export default function resourceStatus(pi: ExtensionAPI) {
                   const reset = formatDuration(
                     usageWindowResetSeconds(window, Date.now()),
                   );
-                  const prefix = `${label.padEnd(7)} `;
                   openAiLines.push(
                     truncateToWidth(
-                      theme.fg("dim", prefix) +
-                        renderCompactProgressBar(
-                          theme,
-                          used,
-                          `↻${reset ?? "?"}`,
-                        ),
+                      renderCompactProgressBar(
+                        theme,
+                        used,
+                        `↻${reset ?? "?"}`,
+                        label,
+                      ),
                       availableWidth,
                     ),
                   );

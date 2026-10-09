@@ -19,6 +19,7 @@ function renderLayout(theme: Theme, layout: CompactContextBarLayout): string {
   const color = progressColor(layout.percent);
   const cells = layout.cells.map((cell, index) => {
     const isFilled = index < layout.filled;
+    if (cell === " ") return theme.inverse(theme.fg("dim", " "));
     const isLabel = cell !== "█" && cell !== "░";
     if (isLabel) {
       return theme.inverse(theme.fg(isFilled ? color : "dim", cell));
@@ -33,8 +34,12 @@ export function renderCompactProgressBar(
   theme: Theme,
   percent: number | null,
   rightLabel: string,
+  leftLabel?: string,
 ): string {
-  return renderLayout(theme, compactProgressBarLayout(percent, rightLabel));
+  return renderLayout(
+    theme,
+    compactProgressBarLayout(percent, rightLabel, leftLabel),
+  );
 }
 
 export function renderCompactContextBar(
@@ -42,9 +47,15 @@ export function renderCompactContextBar(
   tokens: number | null,
   contextWindow: number | undefined,
   suppliedPercent?: number | null,
+  leftLabel?: string,
 ): string {
   return renderLayout(
     theme,
-    compactContextBarLayout(tokens, contextWindow, suppliedPercent),
+    compactContextBarLayout(
+      tokens,
+      contextWindow,
+      suppliedPercent,
+      leftLabel,
+    ),
   );
 }

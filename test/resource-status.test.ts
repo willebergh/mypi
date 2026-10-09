@@ -12,6 +12,8 @@ import {
 } from "../extensions/resource-status/protocol.ts";
 import {
   compactContextBar,
+  compactContextBarLayout,
+  compactProgressBarLayout,
   contextProgress,
   progressBar,
   resourceSummary,
@@ -50,6 +52,25 @@ test("formats stable resource summaries", () => {
     compactContextBar(253_000, 272_000, 93.9),
     "[███93.9%████████████253k/272k█░░]",
   );
+
+  const visibleBar = (layout: { cells: string[] }) =>
+    `[${layout.cells.map((cell) => cell === "░" ? " " : cell).join("")}]`;
+  assert.equal(
+    visibleBar(compactProgressBarLayout(46, "↻4d 21h", "Weekly")),
+    "[█Weekly████████46.0%    ↻4d 21h ]",
+  );
+  const modelBars = [
+    ["5.6-sol", 176_000, "[█5.6-sol       27.8%  176k/272k ]"],
+    ["5.6-lunar", 76_000, "[█5.6-lunar     27.8%   76k/272k ]"],
+    ["5.6-terra", 76_000, "[█5.6-terra     27.8%   76k/272k ]"],
+    ["6-astra", 76_000, "[█6-astra       27.8%   76k/272k ]"],
+  ] as const;
+  for (const [model, tokens, expected] of modelBars) {
+    assert.equal(
+      visibleBar(compactContextBarLayout(tokens, 272_000, 27.8, model)),
+      expected,
+    );
+  }
 
   const styled = renderCompactContextBar(
     {
@@ -110,7 +131,11 @@ test("renders and refreshes the below-editor resource widget", async () => {
 
   const ctx = {
     mode: "tui",
-    model: { contextWindow: 272_000 },
+    model: {
+      id: "gpt-5.6-sol",
+      provider: "openai-codex",
+      contextWindow: 272_000,
+    },
     sessionManager: { getBranch: () => [] },
     getContextUsage: () => ({
       tokens: 136_000,
@@ -150,7 +175,7 @@ test("renders and refreshes the below-editor resource widget", async () => {
   );
   assert.deepEqual(component.render(200), [
     "Session: Refactor auth",
-    "Context [███50.0%████████    136k/272k   ]",
+    "[█5.6-sol       50.0%  136k/272k ]",
   ]);
   assert.doesNotMatch(component.render(200).join("\n"), /Extensions/);
 
@@ -196,8 +221,8 @@ test("renders and refreshes the below-editor resource widget", async () => {
   });
   assert.equal(renders, 4);
   assert.deepEqual(component.render(200).slice(-2), [
-    "5h      [███25.0%                  ↻2h   ]",
-    "Weekly  [███75.0%████████████████  ↻3d   ]",
+    "[█5h█████       25.0%        ↻2h ]",
+    "[█Weekly████████75.0%████    ↻3d ]",
   ]);
 
   const wrapped = component.render(24);

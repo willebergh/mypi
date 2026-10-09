@@ -72,7 +72,7 @@ The Astro development server must already be running; the MCP client connects to
 
 ### Resource status
 
-Shows a live widget below the editor with injected agent directories, actually loaded skills, compact context usage, and provider limits reported by this package. Loaded agent directories and skills use the selected-background highlight. It refreshes whenever tracked resources change and whenever monorepo skill discovery runs during startup or `/reload`.
+Shows a live widget below the editor with injected agent directories, actually loaded skills, compact context usage labeled with the active main-agent model, and provider limits reported by this package. Context and provider-limit labels are embedded inside their progress bars; OpenAI model labels omit the redundant `gpt-` prefix. Loaded agent directories and skills use the selected-background highlight. It refreshes whenever tracked resources change and whenever monorepo skill discovery runs during startup or `/reload`.
 
 Extension participation is still tracked for the `/mypi-resources` command, but it is intentionally omitted from the always-visible widget. Pi does not currently expose a public API for enumerating every third-party extension and native skill.
 
