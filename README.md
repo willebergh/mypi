@@ -72,9 +72,11 @@ The Astro development server must already be running; the MCP client connects to
 
 ### Resource status
 
-Shows a live widget below the editor with injected agent directories, actually loaded skills, compact context usage labeled with the active main-agent model, and provider limits reported by this package. Context and provider-limit labels are embedded inside their progress bars; OpenAI model labels omit the redundant `gpt-` prefix. Loaded agent directories and skills use the selected-background highlight. It refreshes whenever tracked resources change and whenever monorepo skill discovery runs during startup or `/reload`.
+Shows a unified live dashboard below the editor. Its top row combines the session name, elapsed time, main-agent resource counters, and model-labeled context usage. Subagent runs appear beneath it as an aggregate row plus aligned per-agent rows. OpenAI usage windows, todos, injected agent directories, and actually loaded skills follow in the same widget. OpenAI model labels omit the redundant `gpt-` prefix.
 
-Extension participation is still tracked for the `/mypi-resources` command, but it is intentionally omitted from the always-visible widget. Pi does not currently expose a public API for enumerating every third-party extension and native skill.
+`A(N)`, `S(N)`, and `T(X/N)` mean loaded agent instruction files, loaded skills, and completed/total todos. Subagent aggregate counters and context values are sums across the displayed children, and aggregate elapsed time is the sum of their run times. The layout wraps into separate label and metrics lines on narrow terminals and refreshes elapsed values every second.
+
+Extension participation is still tracked for the `/mypi-resources` command, but it is intentionally omitted from the always-visible dashboard. Pi does not currently expose a public API for enumerating every third-party extension and native skill.
 
 ### Ask user
 
@@ -82,7 +84,7 @@ Adds the `ask_user` tool for structured interactive questions instead of numbere
 
 ### Todos
 
-Adds a separate below-editor todo widget and a model-callable `todo` tool. The agent can list, add, complete, edit, remove, and clear items. State is stored in tool-result details so it follows the active session branch and reconstructs correctly after reload, resume, fork, or tree navigation. Use `/todos` to show the current list in a notification.
+Adds a model-callable `todo` tool whose state and detailed items appear in the unified below-editor dashboard. The agent can list, add, complete, edit, remove, and clear items. State is stored in tool-result details so it follows the active session branch and reconstructs correctly after reload, resume, fork, or tree navigation. Use `/todos` to show the current list in a notification.
 
 ### OpenAI subscription usage
 
@@ -96,7 +98,7 @@ The ChatGPT usage endpoint is an undocumented service endpoint and may require p
 
 Adds a generic `subagent` tool for running up to eight independent tasks in isolated Pi RPC subprocesses, with at most four running concurrently by default. The parent is instructed to choose explicitly among `openai-codex/gpt-6-luna` for focused, cost-sensitive work, `openai-codex/gpt-6.1-sol` for a strong intelligence/cost balance, and `openai-codex/gpt-6-astra` for the most demanding reasoning and coding. Omitting the model intentionally inherits the parent model. Tasks also inherit the parent thinking level, working directory, and project trust decision unless explicitly overridden. Child sessions are ephemeral and cannot recursively invoke `subagent` or blocking interactive tools.
 
-A live below-editor widget shows each agent's activity and elapsed time, followed by a compact context bar and `A(N)`, `S(N)`, and `T(X/N)` counters for loaded agent files, loaded skills, and completed/total todos. It intentionally omits turn, raw token, and dollar-cost fields. Pressing Escape on the parent run propagates cancellation to active children. Subagents share the same working tree, so parallel tasks should not edit the same files.
+The unified below-editor dashboard shows aggregate and per-agent activity, elapsed time, resource counters, model, and context usage. It intentionally omits turn, raw usage-token, and dollar-cost fields. Pressing Escape on the parent run propagates cancellation to active children. Subagents share the same working tree, so parallel tasks should not edit the same files.
 
 This first version runs inline in every terminal. Its worker/event model is intentionally independent of cmux so a later adapter can expose the same agents in visible cmux tabs without replacing the scheduler or widget.
 

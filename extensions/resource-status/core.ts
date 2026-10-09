@@ -30,7 +30,8 @@ export interface ContextProgress extends ProgressBar {
 export function compactTokens(tokens: number): string {
   if (tokens < 1_000) return String(tokens);
   if (tokens < 10_000) return `${(tokens / 1_000).toFixed(1)}k`;
-  return `${Math.round(tokens / 1_000)}k`;
+  if (tokens < 1_000_000) return `${Math.round(tokens / 1_000)}k`;
+  return `${(tokens / 1_000_000).toFixed(2).replace(/0+$/u, "").replace(/\.$/u, "")}M`;
 }
 
 export interface CompactContextBarLayout {
@@ -102,6 +103,32 @@ export function compactContextBarLayout(
     }
   }
   return layout;
+}
+
+export function aggregateContextBarLayout(
+  tokens: number,
+  contextWindow: number,
+): CompactContextBarLayout {
+  const percent = contextWindow > 0 ? (tokens / contextWindow) * 100 : null;
+  const clamped = percent === null ? null : Math.max(0, Math.min(100, percent));
+  const width = 32;
+  const filled = clamped === null ? 0 : Math.round((clamped / 100) * width);
+  const cells: string[] = Array.from({ length: width }, (_, index) =>
+    index < filled ? "█" : "░",
+  );
+  const percentLabel = clamped === null ? "?%" : `${clamped.toFixed(1)}%`;
+  const rightLabel = `${compactTokens(tokens)}/${compactTokens(contextWindow)}`;
+  const rightStart = width - 1 - rightLabel.length;
+  for (const [index, character] of [...percentLabel].entries()) {
+    if (index + 1 < rightStart) cells[index + 1] = character;
+  }
+  for (let index = 1 + percentLabel.length; index < rightStart; index += 1) {
+    cells[index] = " ";
+  }
+  for (const [index, character] of [...rightLabel].entries()) {
+    if (index + rightStart < width - 1) cells[index + rightStart] = character;
+  }
+  return { cells, filled, percent: clamped };
 }
 
 export function compactContextBar(

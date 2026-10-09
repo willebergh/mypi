@@ -9,11 +9,16 @@ import {
   OPENAI_USAGE_CHANGED_EVENT,
   SKILL_LOADED_EVENT,
   SKILLS_CHANGED_EVENT,
+  SUBAGENTS_CHANGED_EVENT,
+  TODOS_CHANGED_EVENT,
+  isAgentInstructionFile,
 } from "../extensions/resource-status/protocol.ts";
 import {
+  aggregateContextBarLayout,
   compactContextBar,
   compactContextBarLayout,
   compactProgressBarLayout,
+  compactTokens,
   contextProgress,
   progressBar,
   resourceSummary,
@@ -21,6 +26,11 @@ import {
 } from "../extensions/resource-status/core.ts";
 
 test("formats stable resource summaries", () => {
+  assert.equal(isAgentInstructionFile("AGENTS.md"), true);
+  assert.equal(isAgentInstructionFile("AGENTS.override.md"), true);
+  assert.equal(isAgentInstructionFile("CLAUDE.md"), true);
+  assert.equal(isAgentInstructionFile("README.md"), false);
+
   assert.deepEqual(
     sortedUniqueLabels([
       { id: "b", label: "Beta" },
@@ -55,6 +65,11 @@ test("formats stable resource summaries", () => {
 
   const visibleBar = (layout: { cells: string[] }) =>
     `[${layout.cells.map((cell) => cell === "░" ? " " : cell).join("")}]`;
+  assert.equal(compactTokens(1_360_000), "1.36M");
+  assert.equal(
+    visibleBar(aggregateContextBarLayout(378_080, 1_360_000)),
+    "[█27.8%               378k/1.36M ]",
+  );
   assert.equal(
     visibleBar(compactProgressBarLayout(46, "↻4d 21h", "Weekly")),
     "[█Weekly████████46.0%    ↻4d 21h ]",
@@ -171,24 +186,25 @@ test("renders and refreshes the below-editor resource widget", async () => {
       fg: (_color: string, value: string) => value,
       bg: (_color: string, value: string) => `{${value}}`,
       inverse: (value: string) => value,
+      strikethrough: (value: string) => value,
     },
   );
-  assert.deepEqual(component.render(200), [
-    "Session: Refactor auth",
-    "[█5.6-sol       50.0%  136k/272k ]",
-  ]);
-  assert.doesNotMatch(component.render(200).join("\n"), /Extensions/);
+  const initial = component.render(200);
+  assert.equal(initial.length, 1);
+  assert.match(initial[0], /^Session: Refactor auth\s+0s · A\(0\) · S\(0\) · T\(0\/0\) · /);
+  assert.match(initial[0], /\[█5\.6-sol       50\.0%  136k\/272k \]$/);
+  assert.doesNotMatch(initial.join("\n"), /Extensions/);
 
   events.emit(NESTED_AGENTS_CHANGED_EVENT, {
     files: ["packages/ui/AGENTS.md"],
   });
-  assert.equal(component.render(200)[1], "Agent dirs (1): {packages/ui}");
+  assert.match(component.render(200).join("\n"), /Agent dirs: packages\/ui/);
 
   events.emit(SKILL_LOADED_EVENT, {
     name: "shadcn",
     path: "/repo/packages/ui/.agents/skills/shadcn/SKILL.md",
   });
-  assert.equal(component.render(200)[2], "Skills (1): {shadcn}");
+  assert.match(component.render(200).join("\n"), /Skills: shadcn/);
 
   events.emit(SKILLS_CHANGED_EVENT, {
     skills: [
@@ -200,7 +216,7 @@ test("renders and refreshes the below-editor resource widget", async () => {
     ],
   });
   assert.equal(renders, 3);
-  assert.equal(component.render(200)[2], "Skills (1): {shadcn}");
+  assert.match(component.render(200).join("\n"), /Skills: shadcn/);
 
   events.emit(OPENAI_USAGE_CHANGED_EVENT, {
     status: "ready",
@@ -220,14 +236,56 @@ test("renders and refreshes the below-editor resource widget", async () => {
     },
   });
   assert.equal(renders, 4);
-  assert.deepEqual(component.render(200).slice(-2), [
+  const usageLines = component
+    .render(200)
+    .filter((line: string) => line.trimStart().startsWith("[█"));
+  assert.deepEqual(usageLines.slice(-2).map((line: string) => line.trimStart()), [
     "[█5h█████       25.0%        ↻2h ]",
     "[█Weekly████████75.0%████    ↻3d ]",
   ]);
+
+  const endedAt = Date.now();
+  events.emit(SUBAGENTS_CHANGED_EVENT, {
+    states: [
+      {
+        id: 1,
+        label: "Chart architecture",
+        task: "Inspect charts",
+        cwd: "/repo",
+        status: "completed",
+        activity: "completed",
+        startedAt: endedAt - 155_000,
+        endedAt,
+        turns: 1,
+        usage: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, cost: 0 },
+        model: "openai-codex/gpt-5.6-sol",
+        contextTokens: 76_000,
+        contextWindow: 272_000,
+        agentFiles: 5,
+        loadedSkills: 1,
+        todosCompleted: 3,
+        todosTotal: 3,
+      },
+    ],
+  });
+  events.emit(TODOS_CHANGED_EVENT, {
+    state: {
+      items: [{ id: 1, text: "Inspect charts", completed: true }],
+      nextId: 2,
+    },
+  });
+  const dashboard = component.render(200).join("\n");
+  assert.match(dashboard, /^Session: Refactor auth.*T\(1\/1\)/m);
+  assert.match(dashboard, /^Agents\s+2m35s · A\(5\)/m);
+  assert.match(dashboard, /✓ Chart architecture  completed/);
+  assert.match(dashboard, /Todos \(1\/1 completed\)/);
+  assert.match(dashboard, /✓ #1 Inspect charts/);
 
   const wrapped = component.render(24);
   assert.ok(wrapped.length > 4);
   assert.ok(wrapped.every((line: string) => visibleWidth(line) <= 24));
   assert.match(wrapped.join("\n"), /shadcn/);
+  assert.match(wrapped.join("\n"), /5\.6-sol/);
+  assert.match(wrapped.join("\n"), /272k/);
   assert.doesNotMatch(wrapped.join("\n"), /testing/);
 });

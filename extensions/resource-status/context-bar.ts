@@ -3,6 +3,7 @@ import type {
   ThemeColor,
 } from "@earendil-works/pi-coding-agent";
 import {
+  aggregateContextBarLayout,
   compactContextBarLayout,
   compactProgressBarLayout,
   type CompactContextBarLayout,
@@ -40,6 +41,14 @@ export function renderCompactProgressBar(
     theme,
     compactProgressBarLayout(percent, rightLabel, leftLabel),
   );
+}
+
+export function renderAggregateContextBar(
+  theme: Theme,
+  tokens: number,
+  contextWindow: number,
+): string {
+  return renderLayout(theme, aggregateContextBarLayout(tokens, contextWindow));
 }
 
 export function renderCompactContextBar(

@@ -3,8 +3,10 @@ import type {
   ExtensionAPI,
   ExtensionContext,
 } from "@earendil-works/pi-coding-agent";
-import { truncateToWidth, wrapTextWithAnsi } from "@earendil-works/pi-tui";
-import { announceExtension } from "../resource-status/protocol.ts";
+import {
+  TODOS_CHANGED_EVENT,
+  announceExtension,
+} from "../resource-status/protocol.ts";
 import {
   applyTodoAction,
   cloneTodoState,
@@ -15,7 +17,6 @@ import {
 } from "./core.ts";
 
 const TOOL_NAME = "todo";
-const WIDGET_KEY = "mypi-todos";
 
 const TodoParameters = Type.Object({
   action: StringEnum(
@@ -37,9 +38,10 @@ interface TodoDetails {
 
 export default function todosExtension(pi: ExtensionAPI) {
   let state = emptyTodoState();
-  let requestRender: (() => void) | undefined;
 
-  const refresh = () => requestRender?.();
+  const publish = () => {
+    pi.events.emit(TODOS_CHANGED_EVENT, { state: cloneTodoState(state) });
+  };
 
   const reconstructState = (ctx: ExtensionContext) => {
     state = emptyTodoState();
@@ -52,67 +54,15 @@ export default function todosExtension(pi: ExtensionAPI) {
         state = cloneTodoState(details.state);
       }
     }
-    refresh();
+    publish();
   };
 
   pi.on("session_start", async (_event, ctx) => {
     announceExtension(pi.events, { id: "todos", label: "todos" });
     reconstructState(ctx);
-
-    if (ctx.mode !== "tui") return;
-    ctx.ui.setWidget(
-      WIDGET_KEY,
-      (tui, theme) => {
-        requestRender = () => tui.requestRender();
-        return {
-          invalidate() {},
-          dispose() {
-            requestRender = undefined;
-          },
-          render(width: number): string[] {
-            if (state.items.length === 0) return [];
-
-            const availableWidth = Math.max(1, width);
-            const completed = state.items.filter((item) => item.completed).length;
-            const lines = [
-              truncateToWidth(
-                theme.fg(
-                  "accent",
-                  `Todos (${completed}/${state.items.length} completed)`,
-                ),
-                availableWidth,
-              ),
-            ];
-
-            for (const item of state.items) {
-              const marker = item.completed
-                ? theme.fg("success", "✓")
-                : theme.fg("dim", "○");
-              const id = theme.fg("accent", `#${item.id}`);
-              const text = item.completed
-                ? theme.fg("dim", theme.strikethrough(item.text))
-                : theme.fg("text", item.text);
-              lines.push(
-                ...wrapTextWithAnsi(
-                  `  ${marker} ${id} ${text}`,
-                  availableWidth,
-                ),
-              );
-            }
-            return lines;
-          },
-        };
-      },
-      { placement: "belowEditor" },
-    );
   });
 
   pi.on("session_tree", async (_event, ctx) => reconstructState(ctx));
-
-  pi.on("session_shutdown", async (_event, ctx) => {
-    requestRender = undefined;
-    if (ctx.mode === "tui") ctx.ui.setWidget(WIDGET_KEY, undefined);
-  });
 
   pi.registerTool({
     name: TOOL_NAME,
@@ -125,7 +75,7 @@ export default function todosExtension(pi: ExtensionAPI) {
       const action = parameters as TodoAction;
       const mutation = applyTodoAction(state, action);
       state = mutation.state;
-      refresh();
+      publish();
       return {
         content: [{ type: "text", text: mutation.message }],
         details: {

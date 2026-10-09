@@ -5,13 +5,15 @@ import {
   type ExtensionContext,
   type RpcClient,
 } from "@earendil-works/pi-coding-agent";
-import { Text, truncateToWidth, visibleWidth } from "@earendil-works/pi-tui";
+import { Text } from "@earendil-works/pi-tui";
 import {
   announceExtension,
   NESTED_AGENTS_CHANGED_EVENT,
   SKILL_LOADED_EVENT,
+  SUBAGENTS_CHANGED_EVENT,
   type NestedAgentsChangedPayload,
   type SkillLoadedPayload,
+  isAgentInstructionFile,
 } from "../resource-status/protocol.ts";
 import { renderCompactContextBar } from "../resource-status/context-bar.ts";
 import {
@@ -27,7 +29,6 @@ import {
 import { mapWithConcurrency, runSubagent } from "./runner.ts";
 
 const TOOL_NAME = "subagent";
-const WIDGET_KEY = "mypi-subagents";
 const MAX_TASKS = 8;
 const MAX_CONCURRENCY = 4;
 const PER_RESULT_BYTES = 20 * 1_024;
@@ -147,7 +148,7 @@ function registerChildTelemetry(pi: ExtensionAPI): void {
     baseAgentFiles = new Set(
       event.systemPromptOptions.contextFiles
         .map((file) => file.path)
-        .filter((file) => path.basename(file).toLowerCase() === "agents.md")
+        .filter((file) => isAgentInstructionFile(path.basename(file)))
         .map((file) => path.resolve(ctx?.cwd ?? process.cwd(), file)),
     );
     publish();
@@ -188,129 +189,28 @@ export default function subagentsExtension(pi: ExtensionAPI) {
 
   let states: SubagentState[] = [];
   let nextId = 1;
-  let requestRender: (() => void) | undefined;
-  let elapsedTimer: ReturnType<typeof setInterval> | undefined;
   const activeClients = new Set<RpcClient>();
 
-  const refresh = () => requestRender?.();
   const snapshot = (): SubagentDetails => ({
     states: states.map(cloneSubagentState),
   });
-  const hasActiveAgents = () =>
-    states.some((state) =>
-      ["queued", "starting", "thinking", "running"].includes(state.status),
-    );
-  const syncTimer = () => {
-    if (hasActiveAgents() && !elapsedTimer) {
-      elapsedTimer = setInterval(refresh, 1_000);
-      elapsedTimer.unref?.();
-    } else if (!hasActiveAgents() && elapsedTimer) {
-      clearInterval(elapsedTimer);
-      elapsedTimer = undefined;
-    }
+  const publish = () => {
+    pi.events.emit(SUBAGENTS_CHANGED_EVENT, snapshot());
   };
   const updateState = (next: SubagentState) => {
     const index = states.findIndex((state) => state.id === next.id);
     if (index >= 0) states[index] = next;
-    syncTimer();
-    refresh();
+    publish();
   };
 
-  pi.on("session_start", async (_event, ctx) => {
+  pi.on("session_start", async () => {
     announceExtension(pi.events, { id: "subagents", label: "subagents" });
     states = [];
     nextId = 1;
-
-    if (ctx.mode !== "tui") return;
-    ctx.ui.setWidget(
-      WIDGET_KEY,
-      (tui, theme) => {
-        requestRender = () => tui.requestRender();
-        return {
-          invalidate() {},
-          dispose() {
-            requestRender = undefined;
-          },
-          render(width: number): string[] {
-            if (states.length === 0) return [];
-            const availableWidth = Math.max(1, width);
-            const active = states.filter((state) =>
-              ["queued", "starting", "thinking", "running"].includes(state.status),
-            ).length;
-            const lines = [
-              truncateToWidth(
-                theme.fg(
-                  "accent",
-                  `Agents (${active} active · ${states.length} total)`,
-                ),
-                availableWidth,
-              ),
-            ];
-
-            const counterWidths = subagentCounterWidths(states);
-            for (const state of states) {
-              const color =
-                state.status === "completed"
-                  ? "success"
-                  : state.status === "failed" || state.status === "aborted"
-                    ? "error"
-                    : state.status === "queued"
-                      ? "dim"
-                      : "warning";
-              const prefix =
-                theme.fg(color, statusIcon(state)) +
-                " " +
-                theme.fg("accent", state.label) +
-                theme.fg("dim", "  ");
-              const left = prefix + theme.fg("dim", activitySummary(state));
-              const right =
-                renderCompactContextBar(
-                  theme,
-                  state.contextTokens,
-                  state.contextWindow,
-                ) +
-                theme.fg(
-                  "dim",
-                  ` · ${formatSubagentCounters(state, counterWidths)}`,
-                );
-              const rightWidth = visibleWidth(right);
-              const minimumGap = 2;
-
-              if (rightWidth + minimumGap >= availableWidth) {
-                lines.push(truncateToWidth(left, availableWidth, "…"));
-                const rightLine = truncateToWidth(right, availableWidth, "");
-                lines.push(
-                  " ".repeat(
-                    Math.max(0, availableWidth - visibleWidth(rightLine)),
-                  ) + rightLine,
-                );
-                continue;
-              }
-
-              const truncatedLeft = truncateToWidth(
-                left,
-                availableWidth - rightWidth - minimumGap,
-                "…",
-              );
-              lines.push(
-                truncatedLeft +
-                  " ".repeat(
-                    availableWidth - visibleWidth(truncatedLeft) - rightWidth,
-                  ) +
-                  right,
-              );
-            }
-            return lines;
-          },
-        };
-      },
-      { placement: "belowEditor" },
-    );
+    publish();
   });
 
-  pi.on("session_shutdown", async (_event, ctx) => {
-    if (elapsedTimer) clearInterval(elapsedTimer);
-    elapsedTimer = undefined;
+  pi.on("session_shutdown", async () => {
     await Promise.allSettled(
       [...activeClients].map(async (client) => {
         await client.abort().catch(() => undefined);
@@ -318,8 +218,6 @@ export default function subagentsExtension(pi: ExtensionAPI) {
       }),
     );
     activeClients.clear();
-    requestRender = undefined;
-    if (ctx.mode === "tui") ctx.ui.setWidget(WIDGET_KEY, undefined);
   });
 
   pi.registerTool({
@@ -348,8 +246,7 @@ export default function subagentsExtension(pi: ExtensionAPI) {
       states = tasks.map((task) =>
         createSubagentState(nextId++, task, defaults),
       );
-      syncTimer();
-      refresh();
+      publish();
 
       const publishUpdate = () => {
         onUpdate?.({
@@ -392,8 +289,7 @@ export default function subagentsExtension(pi: ExtensionAPI) {
       );
 
       states = results;
-      syncTimer();
-      refresh();
+      publish();
       return {
         content: [{ type: "text", text: modelOutput(results) }],
         details: snapshot(),

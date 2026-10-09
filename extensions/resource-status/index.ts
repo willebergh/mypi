@@ -24,7 +24,11 @@ import {
   resourceSummary,
   sortedUniqueLabels,
 } from "./core.ts";
+import type { SubagentState } from "../subagents/core.ts";
+import { formatElapsed } from "../subagents/core.ts";
+import { isTodoState, type TodoState } from "../todos/core.ts";
 import {
+  renderAggregateContextBar,
   renderCompactContextBar,
   renderCompactProgressBar,
 } from "./context-bar.ts";
@@ -34,11 +38,16 @@ import {
   OPENAI_USAGE_CHANGED_EVENT,
   SKILL_LOADED_EVENT,
   SKILLS_CHANGED_EVENT,
+  SUBAGENTS_CHANGED_EVENT,
+  TODOS_CHANGED_EVENT,
   announceExtension,
   type ExtensionLoadedPayload,
   type NestedAgentsChangedPayload,
   type SkillLoadedPayload,
   type SkillsChangedPayload,
+  type SubagentsChangedPayload,
+  type TodosChangedPayload,
+  isAgentInstructionFile,
 } from "./protocol.ts";
 
 const WIDGET_KEY = "mypi-resource-status";
@@ -48,6 +57,27 @@ interface SessionRowControls {
   select(): void;
   deselect(): void;
   edit(): void;
+}
+
+function elapsedLabel(milliseconds: number): string {
+  const seconds = Math.max(0, Math.floor(milliseconds / 1_000));
+  if (seconds < 60) return `${seconds}s`;
+  const minutes = Math.floor(seconds / 60);
+  return `${minutes}m${String(seconds % 60).padStart(2, "0")}s`;
+}
+
+function compactModelLabel(model: string | undefined): string {
+  if (!model) return "Model";
+  const id = model.includes("/") ? model.slice(model.lastIndexOf("/") + 1) : model;
+  return id.replace(/^gpt-/, "");
+}
+
+function subagentIcon(state: SubagentState): string {
+  if (state.status === "completed") return "✓";
+  if (state.status === "failed") return "✗";
+  if (state.status === "aborted") return "■";
+  if (state.status === "queued") return "○";
+  return "◌";
 }
 
 class SessionNavigationEditor extends CustomEditor {
@@ -94,11 +124,16 @@ export default function resourceStatus(pi: ExtensionAPI) {
   const skills = new Map<string, string>();
   const loadedSkillPaths = new Set<string>();
   let loadedAgentDirectories: string[] = [];
+  let baseAgentFiles = new Set<string>();
   let openAiUsage: OpenAiUsageState = { status: "inactive" };
+  let subagentStates: SubagentState[] = [];
+  let todoState: TodoState = { items: [], nextId: 1 };
   let sessionName: string | undefined;
+  let sessionStartedAt = Date.now();
   let sessionRowSelected = false;
   let editingSessionName = false;
   let requestRender: (() => void) | undefined;
+  let elapsedTimer: ReturnType<typeof setInterval> | undefined;
 
   const refresh = () => requestRender?.();
 
@@ -136,6 +171,18 @@ export default function resourceStatus(pi: ExtensionAPI) {
     refresh();
   });
 
+  pi.events.on(SUBAGENTS_CHANGED_EVENT, (data) => {
+    const payload = data as SubagentsChangedPayload;
+    subagentStates = payload?.states ?? [];
+    refresh();
+  });
+
+  pi.events.on(TODOS_CHANGED_EVENT, (data) => {
+    const payload = data as TodosChangedPayload;
+    todoState = payload?.state ?? { items: [], nextId: 1 };
+    refresh();
+  });
+
   pi.events.on(SKILL_LOADED_EVENT, (data) => {
     const skill = data as SkillLoadedPayload;
     if (!skill?.name || !skill.path) return;
@@ -169,8 +216,15 @@ export default function resourceStatus(pi: ExtensionAPI) {
   };
 
   pi.on("before_agent_start", async (event, ctx) => {
+    baseAgentFiles = new Set(
+      event.systemPromptOptions.contextFiles
+        .map((file) => file.path)
+        .filter((file) => isAgentInstructionFile(path.basename(file)))
+        .map((file) => path.resolve(ctx.cwd, file)),
+    );
     const skill = parseSkillBlock(event.prompt);
     if (skill) await reportLoadedSkill(skill.location, ctx.cwd, skill.name);
+    refresh();
   });
 
   pi.on("tool_result", async (event, ctx) => {
@@ -203,16 +257,34 @@ export default function resourceStatus(pi: ExtensionAPI) {
 
   pi.on("session_start", async (_event, ctx) => {
     sessionName = pi.getSessionName();
+    sessionStartedAt = Date.now();
     sessionRowSelected = false;
+    subagentStates = [];
+    todoState = { items: [], nextId: 1 };
     loadedSkillPaths.clear();
     for (const entry of ctx.sessionManager.getBranch()) {
-      if (entry.type !== "custom" || entry.customType !== SKILL_LOADED_EVENT) {
+      if (entry.type === "custom" && entry.customType === SKILL_LOADED_EVENT) {
+        const skill = entry.data as SkillLoadedPayload | undefined;
+        if (!skill?.name || !skill.path) continue;
+        skills.set(skill.path, skill.name);
+        loadedSkillPaths.add(skill.path);
         continue;
       }
-      const skill = entry.data as SkillLoadedPayload | undefined;
-      if (!skill?.name || !skill.path) continue;
-      skills.set(skill.path, skill.name);
-      loadedSkillPaths.add(skill.path);
+      if (
+        entry.type === "message" &&
+        entry.message.role === "toolResult" &&
+        entry.message.toolName === "todo"
+      ) {
+        const details = entry.message.details as
+          | { state?: unknown }
+          | undefined;
+        if (isTodoState(details?.state)) {
+          todoState = {
+            items: details.state.items.map((item) => ({ ...item })),
+            nextId: details.state.nextId,
+          };
+        }
+      }
     }
 
     announceExtension(pi.events, {
@@ -221,6 +293,9 @@ export default function resourceStatus(pi: ExtensionAPI) {
     });
 
     if (ctx.mode !== "tui") return;
+
+    elapsedTimer = setInterval(refresh, 1_000);
+    elapsedTimer.unref?.();
 
     ctx.ui.setFooter(() => ({
       invalidate() {},
@@ -276,113 +351,231 @@ export default function resourceStatus(pi: ExtensionAPI) {
           },
           render(width: number): string[] {
             const availableWidth = Math.max(1, width);
-            const sessionText = `Session: ${sessionName || "unnamed"}`;
-            const truncatedSessionText = truncateToWidth(
-              sessionText,
-              availableWidth,
-              "",
-            );
-            const sessionLine = sessionRowSelected
-              ? theme.bg(
-                  "selectedBg",
-                  truncatedSessionText +
-                    " ".repeat(
-                      Math.max(
-                        0,
-                        availableWidth - visibleWidth(truncatedSessionText),
-                      ),
-                    ),
-                )
-              : theme.fg("dim", truncatedSessionText);
+            const now = Date.now();
             const skillEntries = [...skills.entries()]
               .filter(([skillPath]) => loadedSkillPaths.has(skillPath))
               .sort((left, right) => left[1].localeCompare(right[1]));
-            const agentDirectoriesLine =
-              loadedAgentDirectories.length === 0
-                ? undefined
-                : theme.fg(
-                    "dim",
-                    `Agent dirs (${loadedAgentDirectories.length}): `,
-                  ) +
-                  loadedAgentDirectories
-                    .map((directory) =>
-                      theme.bg("selectedBg", theme.fg("text", directory)),
-                    )
-                    .join(theme.fg("dim", " · "));
-            const skillLine =
-              skillEntries.length === 0
-                ? undefined
-                : theme.fg("dim", `Skills (${skillEntries.length}): `) +
-                  skillEntries
-                    .map(([, name]) =>
-                      theme.bg("selectedBg", theme.fg("text", name)),
-                    )
-                    .join(theme.fg("dim", " · "));
             const usage = ctx.getContextUsage();
             const model = ctx.model;
-            const modelName =
-              model && ["openai", "openai-codex"].includes(model.provider)
-                ? model.id.replace(/^gpt-/, "")
-                : model?.id;
             const contextWindow = usage?.contextWindow ?? model?.contextWindow;
-            let contextLine: string;
-
-            if (!usage || !contextWindow) {
-              contextLine = theme.fg(
+            const mainCompleted = todoState.items.filter((item) => item.completed).length;
+            const mainAgentFiles = baseAgentFiles.size + loadedAgentDirectories.length;
+            const aggregate = subagentStates.reduce(
+              (total, state) => ({
+                elapsed:
+                  total.elapsed +
+                  Math.max(0, (state.endedAt ?? now) - (state.startedAt ?? now)),
+                agentFiles: total.agentFiles + state.agentFiles,
+                skills: total.skills + state.loadedSkills,
+                todosCompleted: total.todosCompleted + state.todosCompleted,
+                todosTotal: total.todosTotal + state.todosTotal,
+                contextTokens: total.contextTokens + state.contextTokens,
+                contextWindow: total.contextWindow + (state.contextWindow ?? 0),
+              }),
+              {
+                elapsed: 0,
+                agentFiles: 0,
+                skills: 0,
+                todosCompleted: 0,
+                todosTotal: 0,
+                contextTokens: 0,
+                contextWindow: 0,
+              },
+            );
+            const elapsedValues = [
+              elapsedLabel(now - sessionStartedAt),
+              ...(subagentStates.length > 0
+                ? [elapsedLabel(aggregate.elapsed)]
+                : []),
+              ...subagentStates.map((state) => formatElapsed(state, now)),
+            ];
+            const elapsedWidth = Math.max(...elapsedValues.map((value) => value.length));
+            const agentWidth = Math.max(
+              ...[mainAgentFiles, aggregate.agentFiles, ...subagentStates.map((state) => state.agentFiles)]
+                .map((value) => `A(${value})`.length),
+            );
+            const skillWidth = Math.max(
+              ...[loadedSkillPaths.size, aggregate.skills, ...subagentStates.map((state) => state.loadedSkills)]
+                .map((value) => `S(${value})`.length),
+            );
+            const todoWidth = Math.max(
+              ...[
+                `T(${mainCompleted}/${todoState.items.length})`,
+                `T(${aggregate.todosCompleted}/${aggregate.todosTotal})`,
+                ...subagentStates.map(
+                  (state) => `T(${state.todosCompleted}/${state.todosTotal})`,
+                ),
+              ].map((value) => value.length),
+            );
+            const metrics = (
+              elapsed: string,
+              agentFiles: number,
+              loadedSkills: number,
+              todosCompleted: number,
+              todosTotal: number,
+              bar: string,
+            ) =>
+              theme.fg(
                 "dim",
-                modelName
-                  ? `Context unavailable · ${modelName}`
-                  : "Context unavailable",
+                elapsed.padStart(elapsedWidth) +
+                  " · " +
+                  `A(${agentFiles})`.padEnd(agentWidth) +
+                  " · " +
+                  `S(${loadedSkills})`.padEnd(skillWidth) +
+                  " · " +
+                  `T(${todosCompleted}/${todosTotal})`.padEnd(todoWidth) +
+                  " · ",
+              ) + bar;
+            const row = (left: string, right: string): string[] => {
+              const rightWidth = visibleWidth(right);
+              if (rightWidth + 2 >= availableWidth) {
+                const wrappedRight = wrapTextWithAnsi(right, availableWidth);
+                return [
+                  truncateToWidth(left, availableWidth, "…"),
+                  ...wrappedRight.map(
+                    (rightLine) =>
+                      " ".repeat(
+                        Math.max(0, availableWidth - visibleWidth(rightLine)),
+                      ) + rightLine,
+                  ),
+                ];
+              }
+              const leftLine = truncateToWidth(
+                left,
+                availableWidth - rightWidth - 2,
+                "…",
               );
-            } else {
-              contextLine = renderCompactContextBar(
-                theme,
-                usage.tokens,
-                contextWindow,
-                usage.percent,
-                modelName ?? "Model",
+              return [
+                leftLine +
+                  " ".repeat(
+                    Math.max(2, availableWidth - visibleWidth(leftLine) - rightWidth),
+                  ) +
+                  right,
+              ];
+            };
+
+            const mainBar =
+              usage && contextWindow
+                ? renderCompactContextBar(
+                    theme,
+                    usage.tokens,
+                    contextWindow,
+                    usage.percent,
+                    compactModelLabel(model?.id),
+                  )
+                : theme.fg("dim", "[Context unavailable             ]");
+            const sessionRows = row(
+              theme.fg("dim", `Session: ${sessionName || "Unnamed"}`),
+              metrics(
+                elapsedValues[0],
+                mainAgentFiles,
+                loadedSkillPaths.size,
+                mainCompleted,
+                todoState.items.length,
+                mainBar,
+              ),
+            );
+            if (sessionRowSelected) {
+              sessionRows[0] = theme.bg(
+                "selectedBg",
+                sessionRows[0] +
+                  " ".repeat(Math.max(0, availableWidth - visibleWidth(sessionRows[0]))),
               );
             }
 
-            const openAiLines: string[] = [];
+            const lines = [...sessionRows];
+            if (subagentStates.length > 0) {
+              const aggregateBar =
+                aggregate.contextWindow > 0
+                  ? renderAggregateContextBar(
+                      theme,
+                      aggregate.contextTokens,
+                      aggregate.contextWindow,
+                    )
+                  : theme.fg("dim", "[Context unavailable             ]");
+              lines.push(
+                ...row(
+                  theme.fg("accent", "Agents"),
+                  metrics(
+                    elapsedLabel(aggregate.elapsed),
+                    aggregate.agentFiles,
+                    aggregate.skills,
+                    aggregate.todosCompleted,
+                    aggregate.todosTotal,
+                    aggregateBar,
+                  ),
+                ),
+              );
+
+              for (const state of subagentStates) {
+                const color =
+                  state.status === "completed"
+                    ? "success"
+                    : state.status === "failed" || state.status === "aborted"
+                      ? "error"
+                      : state.status === "queued"
+                        ? "dim"
+                        : "warning";
+                const left =
+                  "  " +
+                  theme.fg(color, subagentIcon(state)) +
+                  " " +
+                  theme.fg("accent", state.label) +
+                  theme.fg("dim", `  ${state.activity}`);
+                const bar = renderCompactContextBar(
+                  theme,
+                  state.contextTokens,
+                  state.contextWindow,
+                  undefined,
+                  compactModelLabel(state.model),
+                );
+                lines.push(
+                  ...row(
+                    left,
+                    metrics(
+                      formatElapsed(state, now),
+                      state.agentFiles,
+                      state.loadedSkills,
+                      state.todosCompleted,
+                      state.todosTotal,
+                      bar,
+                    ),
+                  ),
+                );
+              }
+            }
+
             if (openAiUsage.status === "ready") {
               const windows = [
                 openAiUsage.snapshot.primary,
                 openAiUsage.snapshot.secondary,
               ].filter((window): window is UsageWindow => Boolean(window));
-
-              if (windows.length === 0) {
-                openAiLines.push(theme.fg("dim", "OpenAI limits unavailable"));
-              } else {
-                for (const window of windows) {
-                  const used =
-                    window.usedPercent ??
-                    (window.remainingPercent === undefined
-                      ? null
-                      : 100 - window.remainingPercent);
-                  const label = window.label.replace(/^./, (character) =>
-                    character.toUpperCase(),
-                  );
-                  const reset = formatDuration(
-                    usageWindowResetSeconds(window, Date.now()),
-                  );
-                  openAiLines.push(
-                    truncateToWidth(
-                      renderCompactProgressBar(
-                        theme,
-                        used,
-                        `↻${reset ?? "?"}`,
-                        label,
-                      ),
-                      availableWidth,
-                    ),
-                  );
-                }
+              for (const window of windows) {
+                const used =
+                  window.usedPercent ??
+                  (window.remainingPercent === undefined
+                    ? null
+                    : 100 - window.remainingPercent);
+                const label = window.label.replace(/^./, (character) =>
+                  character.toUpperCase(),
+                );
+                const reset = formatDuration(
+                  usageWindowResetSeconds(window, now),
+                );
+                const bar = renderCompactProgressBar(
+                  theme,
+                  used,
+                  `↻${reset ?? "?"}`,
+                  label,
+                );
+                lines.push(
+                  " ".repeat(Math.max(0, availableWidth - visibleWidth(bar))) + bar,
+                );
               }
             } else {
               const text = formatOpenAiUsageState(openAiUsage);
               if (text) {
-                openAiLines.push(
+                lines.push(
                   ...wrapTextWithAnsi(
                     theme.fg(openAiUsage.status === "error" ? "error" : "dim", text),
                     availableWidth,
@@ -391,17 +584,44 @@ export default function resourceStatus(pi: ExtensionAPI) {
               }
             }
 
-            return [
-              sessionLine,
-              ...(agentDirectoriesLine
-                ? wrapTextWithAnsi(agentDirectoriesLine, availableWidth)
-                : []),
-              ...(skillLine
-                ? wrapTextWithAnsi(skillLine, availableWidth)
-                : []),
-              truncateToWidth(contextLine, availableWidth),
-              ...openAiLines,
-            ];
+            if (todoState.items.length > 0) {
+              lines.push("", theme.fg("accent", `Todos (${mainCompleted}/${todoState.items.length} completed)`));
+              for (const item of todoState.items) {
+                const marker = item.completed
+                  ? theme.fg("success", "✓")
+                  : theme.fg("dim", "○");
+                const id = theme.fg("accent", `#${item.id}`);
+                const text = item.completed
+                  ? theme.fg("dim", theme.strikethrough(item.text))
+                  : theme.fg("text", item.text);
+                lines.push(
+                  ...wrapTextWithAnsi(
+                    `  ${marker} ${id} ${text}`,
+                    availableWidth,
+                  ),
+                );
+              }
+            }
+
+            const detailLines: string[] = [];
+            if (loadedAgentDirectories.length > 0) {
+              detailLines.push(
+                theme.fg("dim", `Agent dirs: ${loadedAgentDirectories.join(" · ")}`),
+              );
+            }
+            if (skillEntries.length > 0) {
+              detailLines.push(
+                theme.fg("dim", `Skills: ${skillEntries.map(([, name]) => name).join(" · ")}`),
+              );
+            }
+            if (detailLines.length > 0) {
+              lines.push("");
+              for (const detail of detailLines) {
+                lines.push(...wrapTextWithAnsi(detail, availableWidth));
+              }
+            }
+
+            return lines.map((line) => truncateToWidth(line, availableWidth));
           },
         };
       },
@@ -415,6 +635,8 @@ export default function resourceStatus(pi: ExtensionAPI) {
   pi.on("model_select", refresh);
 
   pi.on("session_shutdown", async (_event, ctx) => {
+    if (elapsedTimer) clearInterval(elapsedTimer);
+    elapsedTimer = undefined;
     requestRender = undefined;
     if (ctx.mode === "tui") {
       ctx.ui.setWidget(WIDGET_KEY, undefined);

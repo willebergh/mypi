@@ -56,12 +56,16 @@ test("recognizes persisted todo state", () => {
   assert.equal(isTodoState({ items: [{ id: 1, text: "x" }], nextId: 2 }), false);
 });
 
-test("hides the todo widget while the list is empty", async () => {
+test("publishes todo state for the unified dashboard", async () => {
   const lifecycle = new Map<string, (event: unknown, ctx: any) => Promise<void>>();
+  const published: Array<{ name: string; data: any }> = [];
   let tool: any;
-  let widgetFactory: any;
   const api = {
-    events: { emit() {} },
+    events: {
+      emit(name: string, data: unknown) {
+        published.push({ name, data });
+      },
+    },
     on(name: string, handler: (event: unknown, ctx: any) => Promise<void>) {
       lifecycle.set(name, handler);
     },
@@ -73,27 +77,13 @@ test("hides the todo widget while the list is empty", async () => {
   todosExtension(api as any);
 
   await lifecycle.get("session_start")?.({}, {
-    mode: "tui",
     sessionManager: { getBranch: () => [] },
-    ui: {
-      setWidget(_key: string, factory: any) {
-        widgetFactory = factory;
-      },
-    },
   });
-
-  const component = widgetFactory(
-    { requestRender() {} },
-    {
-      fg: (_color: string, value: string) => value,
-      strikethrough: (value: string) => value,
-    },
-  );
-  assert.deepEqual(component.render(80), []);
+  assert.deepEqual(published.at(-1)?.data.state.items, []);
 
   await tool.execute("call-1", { action: "add", text: "Visible" });
-  assert.match(component.render(80).join("\n"), /Visible/);
+  assert.equal(published.at(-1)?.data.state.items[0].text, "Visible");
 
   await tool.execute("call-2", { action: "clear" });
-  assert.deepEqual(component.render(80), []);
+  assert.deepEqual(published.at(-1)?.data.state.items, []);
 });
