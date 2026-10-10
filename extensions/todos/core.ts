@@ -2,6 +2,7 @@ export interface TodoItem {
   id: number;
   text: string;
   completed: boolean;
+  completedAt?: number;
 }
 
 export interface TodoState {
@@ -88,6 +89,7 @@ export function applyTodoAction(
     case "complete": {
       const item = findItem(state, requiredId(action));
       item.completed = true;
+      item.completedAt = Date.now();
       return { state, message: `Completed todo #${item.id}: ${item.text}` };
     }
 
@@ -124,6 +126,9 @@ export function isTodoState(value: unknown): value is TodoState {
       item !== null &&
       Number.isInteger((item as Record<string, unknown>).id) &&
       typeof (item as Record<string, unknown>).text === "string" &&
-      typeof (item as Record<string, unknown>).completed === "boolean",
+      typeof (item as Record<string, unknown>).completed === "boolean" &&
+      ((item as Record<string, unknown>).completedAt === undefined ||
+        (typeof (item as Record<string, unknown>).completedAt === "number" &&
+          Number.isFinite((item as Record<string, unknown>).completedAt))),
   );
 }

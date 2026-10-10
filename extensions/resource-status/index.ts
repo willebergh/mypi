@@ -586,7 +586,31 @@ export default function resourceStatus(pi: ExtensionAPI) {
 
             if (todoState.items.length > 0) {
               lines.push("", theme.fg("accent", `Todos (${mainCompleted}/${todoState.items.length} completed)`));
+              const activeTodos = todoState.items.filter((item) => !item.completed);
+              let latestCompleted: TodoState["items"][number] | undefined;
               for (const item of todoState.items) {
+                if (!item.completed) continue;
+                if (!latestCompleted) {
+                  latestCompleted = item;
+                } else if (
+                  item.completedAt !== undefined &&
+                  (latestCompleted.completedAt === undefined ||
+                    item.completedAt > latestCompleted.completedAt)
+                ) {
+                  latestCompleted = item;
+                } else if (
+                  item.completedAt === undefined &&
+                  latestCompleted.completedAt === undefined
+                ) {
+                  latestCompleted = item;
+                }
+              }
+              const activeLimit = latestCompleted ? 4 : 5;
+              const visibleIds = new Set([
+                ...activeTodos.slice(0, activeLimit).map((item) => item.id),
+                ...(latestCompleted ? [latestCompleted.id] : []),
+              ]);
+              for (const item of todoState.items.filter((item) => visibleIds.has(item.id))) {
                 const marker = item.completed
                   ? theme.fg("success", "✓")
                   : theme.fg("dim", "○");
@@ -598,6 +622,15 @@ export default function resourceStatus(pi: ExtensionAPI) {
                   ...wrapTextWithAnsi(
                     `  ${marker} ${id} ${text}`,
                     availableWidth,
+                  ),
+                );
+              }
+              if (activeTodos.length > activeLimit) {
+                const remaining = activeTodos.length - activeLimit;
+                lines.push(
+                  theme.fg(
+                    "dim",
+                    `  … ${remaining} more active todo${remaining === 1 ? "" : "s"}`,
                   ),
                 );
               }

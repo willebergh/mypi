@@ -23,6 +23,7 @@ test("supports the complete todo lifecycle", () => {
 
   ({ state } = applyTodoAction(state, { action: "complete", id: 1 }));
   assert.equal(state.items[0].completed, true);
+  assert.equal(typeof state.items[0].completedAt, "number");
 
   ({ state } = applyTodoAction(state, { action: "remove", id: 2 }));
   assert.deepEqual(state.items.map((item) => item.id), [1]);
@@ -53,6 +54,20 @@ test("validates todo operations without mutating the prior state", () => {
 
 test("recognizes persisted todo state", () => {
   assert.equal(isTodoState({ items: [], nextId: 1 }), true);
+  assert.equal(
+    isTodoState({
+      items: [{ id: 1, text: "x", completed: true, completedAt: 123 }],
+      nextId: 2,
+    }),
+    true,
+  );
+  assert.equal(
+    isTodoState({
+      items: [{ id: 1, text: "x", completed: true, completedAt: "now" }],
+      nextId: 2,
+    }),
+    false,
+  );
   assert.equal(isTodoState({ items: [{ id: 1, text: "x" }], nextId: 2 }), false);
 });
 

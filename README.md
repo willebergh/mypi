@@ -84,7 +84,7 @@ Adds the `ask_user` tool for structured interactive questions instead of numbere
 
 ### Todos
 
-Adds a model-callable `todo` tool whose state and detailed items appear in the unified below-editor dashboard. The agent can list, add, complete, edit, remove, and clear items. State is stored in tool-result details so it follows the active session branch and reconstructs correctly after reload, resume, fork, or tree navigation. Use `/todos` to show the current list in a notification.
+Adds a model-callable `todo` tool whose state appears in the unified below-editor dashboard. The dashboard shows the latest completed item plus up to four incomplete items, summarizes additional active items, and keeps older completed items represented only in the count. The agent can list, add, complete, edit, remove, and clear items. State is stored in tool-result details so it follows the active session branch and reconstructs correctly after reload, resume, fork, or tree navigation. Use `/todos` to show the complete list in a notification.
 
 ### OpenAI subscription usage
 

@@ -270,16 +270,28 @@ test("renders and refreshes the below-editor resource widget", async () => {
   });
   events.emit(TODOS_CHANGED_EVENT, {
     state: {
-      items: [{ id: 1, text: "Inspect charts", completed: true }],
-      nextId: 2,
+      items: [
+        { id: 1, text: "Completed and hidden", completed: true },
+        ...Array.from({ length: 6 }, (_, index) => ({
+          id: index + 2,
+          text: `Active todo ${index + 1}`,
+          completed: false,
+        })),
+      ],
+      nextId: 8,
     },
   });
   const dashboard = component.render(200).join("\n");
-  assert.match(dashboard, /^Session: Refactor auth.*T\(1\/1\)/m);
+  assert.match(dashboard, /^Session: Refactor auth.*T\(1\/7\)/m);
   assert.match(dashboard, /^Agents\s+2m35s · A\(5\)/m);
   assert.match(dashboard, /✓ Chart architecture  completed/);
-  assert.match(dashboard, /Todos \(1\/1 completed\)/);
-  assert.match(dashboard, /✓ #1 Inspect charts/);
+  assert.match(dashboard, /Todos \(1\/7 completed\)/);
+  assert.match(dashboard, /✓ #1 Completed and hidden/);
+  assert.match(dashboard, /○ #2 Active todo 1/);
+  assert.match(dashboard, /○ #5 Active todo 4/);
+  assert.doesNotMatch(dashboard, /Active todo 5/);
+  assert.doesNotMatch(dashboard, /Active todo 6/);
+  assert.match(dashboard, /… 2 more active todos/);
 
   const wrapped = component.render(24);
   assert.ok(wrapped.length > 4);
