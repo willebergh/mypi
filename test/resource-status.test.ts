@@ -102,6 +102,18 @@ test("formats stable resource summaries", () => {
     /<bg>1<\/bg><bg>3<\/bg><bg>6<\/bg><bg>k<\/bg><bg>\/<\/bg>/,
   );
   assert.match(styled, /<bg> <\/bg>/);
+
+  const coloredSpacer = renderCompactContextBar(
+    {
+      fg: (color: string, text: string) => `<${color}>${text}</${color}>`,
+      inverse: (text: string) => `<bg>${text}</bg>`,
+    } as any,
+    185_000,
+    272_000,
+    68.1,
+    "5.6-sol",
+  );
+  assert.match(coloredSpacer, /<bg><success> <\/success><\/bg>/);
 });
 
 test("renders and refreshes the below-editor resource widget", async () => {

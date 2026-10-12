@@ -20,7 +20,9 @@ function renderLayout(theme: Theme, layout: CompactContextBarLayout): string {
   const color = progressColor(layout.percent);
   const cells = layout.cells.map((cell, index) => {
     const isFilled = index < layout.filled;
-    if (cell === " ") return theme.inverse(theme.fg("dim", " "));
+    if (cell === " ") {
+      return theme.inverse(theme.fg(isFilled ? color : "dim", " "));
+    }
     const isLabel = cell !== "█" && cell !== "░";
     if (isLabel) {
       return theme.inverse(theme.fg(isFilled ? color : "dim", cell));
