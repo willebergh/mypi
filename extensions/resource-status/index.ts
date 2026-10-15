@@ -24,8 +24,11 @@ import {
   resourceSummary,
   sortedUniqueLabels,
 } from "./core.ts";
-import type { SubagentState } from "../subagents/core.ts";
-import { formatElapsed } from "../subagents/core.ts";
+import {
+  allSubagentsSettled,
+  formatElapsed,
+  type SubagentState,
+} from "../subagents/core.ts";
 import { isTodoState, type TodoState } from "../todos/core.ts";
 import {
   renderAggregateContextBar,
@@ -541,41 +544,43 @@ export default function resourceStatus(pi: ExtensionAPI) {
                 ),
               );
 
-              for (const state of subagentStates) {
-                const color =
-                  state.status === "completed"
-                    ? "success"
-                    : state.status === "failed" || state.status === "aborted"
-                      ? "error"
-                      : state.status === "queued"
-                        ? "dim"
-                        : "warning";
-                const left =
-                  "  " +
-                  theme.fg(color, subagentIcon(state)) +
-                  " " +
-                  theme.fg("accent", state.label) +
-                  theme.fg("dim", `  ${state.activity}`);
-                const bar = renderCompactContextBar(
-                  theme,
-                  state.contextTokens,
-                  state.contextWindow,
-                  undefined,
-                  compactModelLabel(state.model),
-                );
-                lines.push(
-                  ...row(
-                    left,
-                    metrics(
-                      formatElapsed(state, now),
-                      state.agentFiles,
-                      state.loadedSkills,
-                      state.todosCompleted,
-                      state.todosTotal,
-                      bar,
+              if (!allSubagentsSettled(subagentStates)) {
+                for (const state of subagentStates) {
+                  const color =
+                    state.status === "completed"
+                      ? "success"
+                      : state.status === "failed" || state.status === "aborted"
+                        ? "error"
+                        : state.status === "queued"
+                          ? "dim"
+                          : "warning";
+                  const left =
+                    "  " +
+                    theme.fg(color, subagentIcon(state)) +
+                    " " +
+                    theme.fg("accent", state.label) +
+                    theme.fg("dim", `  ${state.activity}`);
+                  const bar = renderCompactContextBar(
+                    theme,
+                    state.contextTokens,
+                    state.contextWindow,
+                    undefined,
+                    compactModelLabel(state.model),
+                  );
+                  lines.push(
+                    ...row(
+                      left,
+                      metrics(
+                        formatElapsed(state, now),
+                        state.agentFiles,
+                        state.loadedSkills,
+                        state.todosCompleted,
+                        state.todosTotal,
+                        bar,
+                      ),
                     ),
-                  ),
-                );
+                  );
+                }
               }
             }
 

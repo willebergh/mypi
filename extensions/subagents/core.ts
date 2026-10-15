@@ -12,6 +12,17 @@ export type SubagentStatus =
   | "failed"
   | "aborted";
 
+export function allSubagentsSettled(
+  states: readonly Pick<SubagentState, "status">[],
+): boolean {
+  return (
+    states.length > 0 &&
+    states.every((state) =>
+      ["completed", "failed", "aborted"].includes(state.status),
+    )
+  );
+}
+
 export interface SubagentUsage {
   input: number;
   output: number;

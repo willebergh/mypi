@@ -81,17 +81,6 @@ export function subagentTaskBlock(
   return `> **${index}. ${label}**\n>\n${quotedTask}`;
 }
 
-export function dashboardSubagentStates(
-  states: readonly SubagentState[],
-): SubagentState[] {
-  const allSettled =
-    states.length > 0 &&
-    states.every((state) =>
-      ["completed", "failed", "aborted"].includes(state.status),
-    );
-  return allSettled ? [] : states.map(cloneSubagentState);
-}
-
 function registerChildTelemetry(pi: ExtensionAPI): void {
   if (process.env.MYPI_SUBAGENT !== "1") return;
 
@@ -184,9 +173,7 @@ export default function subagentsExtension(pi: ExtensionAPI) {
     states: states.map(cloneSubagentState),
   });
   const publish = () => {
-    pi.events.emit(SUBAGENTS_CHANGED_EVENT, {
-      states: dashboardSubagentStates(states),
-    });
+    pi.events.emit(SUBAGENTS_CHANGED_EVENT, snapshot());
   };
   const updateState = (next: SubagentState) => {
     const index = states.findIndex((state) => state.id === next.id);

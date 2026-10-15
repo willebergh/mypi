@@ -301,7 +301,7 @@ test("renders and refreshes the below-editor resource widget", async () => {
   const dashboard = component.render(200).join("\n");
   assert.match(dashboard, /^Main agent.*T\(1\/7\)/m);
   assert.match(dashboard, /^Agents\s+2m35s · A\(5\)/m);
-  assert.match(dashboard, /✓ Chart architecture  completed/);
+  assert.doesNotMatch(dashboard, /Chart architecture/);
   assert.match(dashboard, /Todos \(1\/7 completed\)/);
   assert.match(dashboard, /✓ #1 Completed and hidden/);
   assert.match(dashboard, /○ #2 Active todo 1/);

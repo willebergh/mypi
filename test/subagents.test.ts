@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import type { JsonAgentSessionEvent } from "@earendil-works/pi-coding-agent";
 import {
+  allSubagentsSettled,
   applySubagentEvent,
   compactContextBar,
   createSubagentState,
@@ -12,7 +13,6 @@ import {
 } from "../extensions/subagents/core.ts";
 import {
   SubagentParameters,
-  dashboardSubagentStates,
   subagentTaskBlock,
 } from "../extensions/subagents/index.ts";
 import { mapWithConcurrency } from "../extensions/subagents/runner.ts";
@@ -25,15 +25,15 @@ test("keeps concurrency internal to the subagent backend", () => {
   );
 });
 
-test("clears dashboard agents only after every task settles", () => {
+test("detects when every dashboard agent has settled", () => {
   const first = createSubagentState(1, { task: "One" }, { cwd: "/repo" });
   const second = createSubagentState(2, { task: "Two" }, { cwd: "/repo" });
   first.status = "completed";
   second.status = "running";
-  assert.equal(dashboardSubagentStates([first, second]).length, 2);
+  assert.equal(allSubagentsSettled([first, second]), false);
 
   second.status = "failed";
-  assert.deepEqual(dashboardSubagentStates([first, second]), []);
+  assert.equal(allSubagentsSettled([first, second]), true);
 });
 
 test("formats each delegated task as a separate markdown block", () => {
