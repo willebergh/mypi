@@ -10,7 +10,15 @@ import {
   parseSubagentTelemetry,
   subagentCounterWidths,
 } from "../extensions/subagents/core.ts";
+import { subagentTaskBlock } from "../extensions/subagents/index.ts";
 import { mapWithConcurrency } from "../extensions/subagents/runner.ts";
+
+test("formats each delegated task as a separate markdown block", () => {
+  assert.equal(
+    subagentTaskBlock(2, "Dashboard review", "Inspect layout\nReport issues"),
+    "> **2. Dashboard review**\n>\n> Inspect layout\n> Report issues",
+  );
+});
 
 test("tracks a subagent through turns, tools, usage, and completion", () => {
   const state = createSubagentState(

@@ -1,11 +1,12 @@
 import path from "node:path";
 import { StringEnum, Type } from "@earendil-works/pi-ai";
 import {
+  getMarkdownTheme,
   type ExtensionAPI,
   type ExtensionContext,
   type RpcClient,
 } from "@earendil-works/pi-coding-agent";
-import { Text } from "@earendil-works/pi-tui";
+import { Container, Markdown, Spacer, Text } from "@earendil-works/pi-tui";
 import {
   announceExtension,
   NESTED_AGENTS_CHANGED_EVENT,
@@ -15,13 +16,9 @@ import {
   type SkillLoadedPayload,
   isAgentInstructionFile,
 } from "../resource-status/protocol.ts";
-import { renderCompactContextBar } from "../resource-status/context-bar.ts";
 import {
   cloneSubagentState,
   createSubagentState,
-  formatElapsed,
-  formatSubagentCounters,
-  subagentCounterWidths,
   SUBAGENT_TELEMETRY_STATUS_KEY,
   type SubagentState,
   type SubagentTask,
@@ -79,28 +76,16 @@ interface SubagentDetails {
   states: SubagentState[];
 }
 
-function statusIcon(state: SubagentState): string {
-  switch (state.status) {
-    case "queued":
-      return "○";
-    case "starting":
-    case "thinking":
-    case "running":
-      return "◌";
-    case "completed":
-      return "✓";
-    case "failed":
-      return "✗";
-    case "aborted":
-      return "■";
-  }
-}
-
-function activitySummary(state: SubagentState): string {
-  const parts = [state.activity];
-  const elapsed = formatElapsed(state);
-  if (elapsed) parts.push(elapsed);
-  return parts.join(" · ");
+export function subagentTaskBlock(
+  index: number,
+  label: string,
+  task: string,
+): string {
+  const quotedTask = task
+    .split("\n")
+    .map((line) => `> ${line}`)
+    .join("\n");
+  return `> **${index}. ${label}**\n>\n${quotedTask}`;
 }
 
 function registerChildTelemetry(pi: ExtensionAPI): void {
@@ -296,44 +281,40 @@ export default function subagentsExtension(pi: ExtensionAPI) {
       };
     },
     renderCall(args, theme) {
-      const count = args.tasks?.length ?? 0;
-      let text =
-        theme.fg("toolTitle", theme.bold("subagent ")) +
-        theme.fg("accent", `${count} task${count === 1 ? "" : "s"}`);
-      for (const [index, task] of (args.tasks ?? []).slice(0, 4).entries()) {
-        text += `\n  ${theme.fg("muted", `${index + 1}.`)} ${theme.fg("accent", task.label || `agent-${index + 1}`)} ${theme.fg("dim", task.task)}`;
-      }
-      return new Text(text, 0, 0);
-    },
-    renderResult(result, _options, theme) {
-      const details = result.details as SubagentDetails | undefined;
-      if (!details) {
-        const content = result.content[0];
-        return new Text(content?.type === "text" ? content.text : "", 0, 0);
-      }
-      const counterWidths = subagentCounterWidths(details.states);
-      const lines = details.states.map((state) => {
-        const color =
-          state.status === "completed"
-            ? "success"
-            : state.status === "failed" || state.status === "aborted"
-              ? "error"
-              : "warning";
-        return (
-          `${theme.fg(color, statusIcon(state))} ${theme.fg("accent", state.label)}  ` +
-          theme.fg("dim", `${activitySummary(state)} · `) +
-          renderCompactContextBar(
-            theme,
-            state.contextTokens,
-            state.contextWindow,
-          ) +
-          theme.fg(
-            "dim",
-            ` · ${formatSubagentCounters(state, counterWidths)}`,
-          )
+      const tasks = args.tasks ?? [];
+      const count = tasks.length;
+      const container = new Container();
+      container.addChild(
+        new Text(
+          theme.fg("toolTitle", theme.bold("subagent ")) +
+            theme.fg("accent", `${count} task${count === 1 ? "" : "s"}`),
+          0,
+          0,
+        ),
+      );
+      const markdownTheme = getMarkdownTheme();
+      for (const [index, task] of tasks.entries()) {
+        container.addChild(new Spacer(1));
+        container.addChild(
+          new Markdown(
+            subagentTaskBlock(
+              index + 1,
+              task.label || `agent-${index + 1}`,
+              task.task,
+            ),
+            0,
+            0,
+            markdownTheme,
+          ),
         );
-      });
-      return new Text(lines.join("\n"), 0, 0);
+      }
+      return container;
+    },
+    renderResult(result) {
+      const details = result.details as SubagentDetails | undefined;
+      if (details) return new Text("", 0, 0);
+      const content = result.content[0];
+      return new Text(content?.type === "text" ? content.text : "", 0, 0);
     },
   });
 }
