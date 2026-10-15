@@ -72,7 +72,7 @@ The Astro development server must already be running; the MCP client connects to
 
 ### Resource status
 
-Shows a unified live dashboard below the editor. Its top row combines the session name, elapsed time, main-agent resource counters, and model-labeled context usage. Subagent runs appear beneath it as an aggregate row plus aligned per-agent rows. OpenAI usage windows, todos, injected agent directories, and actually loaded skills follow in the same widget. OpenAI model labels omit the redundant `gpt-` prefix.
+Shows a unified live dashboard below the editor. Its top row keeps the session name on the left and the weekly OpenAI usage window on the right. A separate main-agent row contains elapsed time, resource counters, and model-labeled context usage. Subagent runs appear beneath it as an aggregate row plus aligned per-agent rows. Other OpenAI usage windows, todos, injected agent directories, and actually loaded skills follow in the same widget. OpenAI model labels omit the redundant `gpt-` prefix.
 
 `A(N)`, `S(N)`, and `T(X/N)` mean loaded agent instruction files, loaded skills, and completed/total todos. Subagent aggregate counters and context values are sums across the displayed children, and aggregate elapsed time is the sum of their run times. The layout wraps into separate label and metrics lines on narrow terminals and refreshes elapsed values every second.
 

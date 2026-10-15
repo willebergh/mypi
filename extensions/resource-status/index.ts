@@ -454,6 +454,36 @@ export default function resourceStatus(pi: ExtensionAPI) {
               ];
             };
 
+            const usageWindows =
+              openAiUsage.status === "ready"
+                ? [
+                    openAiUsage.snapshot.primary,
+                    openAiUsage.snapshot.secondary,
+                  ].filter((window): window is UsageWindow => Boolean(window))
+                : [];
+            const weeklyWindow = usageWindows.find((window) =>
+              /week/i.test(window.label),
+            );
+            const usageBar = (window: UsageWindow) => {
+              const used =
+                window.usedPercent ??
+                (window.remainingPercent === undefined
+                  ? null
+                  : 100 - window.remainingPercent);
+              const label = window.label.replace(/^./, (character) =>
+                character.toUpperCase(),
+              );
+              const reset = formatDuration(
+                usageWindowResetSeconds(window, now),
+              );
+              return renderCompactProgressBar(
+                theme,
+                used,
+                `↻${reset ?? "?"}`,
+                label,
+              );
+            };
+
             const mainBar =
               usage && contextWindow
                 ? renderCompactContextBar(
@@ -466,6 +496,10 @@ export default function resourceStatus(pi: ExtensionAPI) {
                 : theme.fg("dim", "[Context unavailable             ]");
             const sessionRows = row(
               theme.fg("dim", `Session: ${sessionName || "Unnamed"}`),
+              weeklyWindow ? usageBar(weeklyWindow) : "",
+            );
+            const mainRows = row(
+              theme.fg("accent", "Main agent"),
               metrics(
                 elapsedValues[0],
                 mainAgentFiles,
@@ -483,7 +517,7 @@ export default function resourceStatus(pi: ExtensionAPI) {
               );
             }
 
-            const lines = [...sessionRows];
+            const lines = [...sessionRows, ...mainRows];
             if (subagentStates.length > 0) {
               const aggregateBar =
                 aggregate.contextWindow > 0
@@ -546,28 +580,9 @@ export default function resourceStatus(pi: ExtensionAPI) {
             }
 
             if (openAiUsage.status === "ready") {
-              const windows = [
-                openAiUsage.snapshot.primary,
-                openAiUsage.snapshot.secondary,
-              ].filter((window): window is UsageWindow => Boolean(window));
-              for (const window of windows) {
-                const used =
-                  window.usedPercent ??
-                  (window.remainingPercent === undefined
-                    ? null
-                    : 100 - window.remainingPercent);
-                const label = window.label.replace(/^./, (character) =>
-                  character.toUpperCase(),
-                );
-                const reset = formatDuration(
-                  usageWindowResetSeconds(window, now),
-                );
-                const bar = renderCompactProgressBar(
-                  theme,
-                  used,
-                  `↻${reset ?? "?"}`,
-                  label,
-                );
+              for (const window of usageWindows) {
+                if (window === weeklyWindow) continue;
+                const bar = usageBar(window);
                 lines.push(
                   " ".repeat(Math.max(0, availableWidth - visibleWidth(bar))) + bar,
                 );

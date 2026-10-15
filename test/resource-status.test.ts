@@ -202,9 +202,10 @@ test("renders and refreshes the below-editor resource widget", async () => {
     },
   );
   const initial = component.render(200);
-  assert.equal(initial.length, 1);
-  assert.match(initial[0], /^Session: Refactor auth\s+0s · A\(0\) · S\(0\) · T\(0\/0\) · /);
-  assert.match(initial[0], /\[█5\.6-sol       50\.0%  136k\/272k \]$/);
+  assert.equal(initial.length, 2);
+  assert.match(initial[0], /^Session: Refactor auth\s+$/);
+  assert.match(initial[1], /^Main agent\s+0s · A\(0\) · S\(0\) · T\(0\/0\) · /);
+  assert.match(initial[1], /\[█5\.6-sol       50\.0%  136k\/272k \]$/);
   assert.doesNotMatch(initial.join("\n"), /Extensions/);
 
   events.emit(NESTED_AGENTS_CHANGED_EVENT, {
@@ -248,12 +249,16 @@ test("renders and refreshes the below-editor resource widget", async () => {
     },
   });
   assert.equal(renders, 4);
-  const usageLines = component
-    .render(200)
-    .filter((line: string) => line.trimStart().startsWith("[█"));
-  assert.deepEqual(usageLines.slice(-2).map((line: string) => line.trimStart()), [
+  const usageDashboard = component.render(200);
+  assert.match(
+    usageDashboard[0],
+    /^Session: Refactor auth\s+\[█Weekly████████75\.0%████    ↻3d \]$/,
+  );
+  const usageLines = usageDashboard.filter((line: string) =>
+    line.trimStart().startsWith("[█"),
+  );
+  assert.deepEqual(usageLines.map((line: string) => line.trimStart()), [
     "[█5h█████       25.0%        ↻2h ]",
-    "[█Weekly████████75.0%████    ↻3d ]",
   ]);
 
   const endedAt = Date.now();
@@ -294,7 +299,7 @@ test("renders and refreshes the below-editor resource widget", async () => {
     },
   });
   const dashboard = component.render(200).join("\n");
-  assert.match(dashboard, /^Session: Refactor auth.*T\(1\/7\)/m);
+  assert.match(dashboard, /^Main agent.*T\(1\/7\)/m);
   assert.match(dashboard, /^Agents\s+2m35s · A\(5\)/m);
   assert.match(dashboard, /✓ Chart architecture  completed/);
   assert.match(dashboard, /Todos \(1\/7 completed\)/);
