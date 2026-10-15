@@ -26,7 +26,7 @@ import {
 import { mapWithConcurrency, runSubagent } from "./runner.ts";
 
 const TOOL_NAME = "subagent";
-const MAX_TASKS = 8;
+const MAX_TASKS = 16;
 const MAX_CONCURRENCY = 4;
 const PER_RESULT_BYTES = 20 * 1_024;
 const TOTAL_RESULT_BYTES = 50 * 1_024;
@@ -57,19 +57,12 @@ const TaskParameters = Type.Object({
   ),
 });
 
-const SubagentParameters = Type.Object({
+export const SubagentParameters = Type.Object({
   tasks: Type.Array(TaskParameters, {
     minItems: 1,
     maxItems: MAX_TASKS,
-    description: "Independent tasks to run concurrently",
+    description: "Independent tasks scheduled with backend-managed concurrency",
   }),
-  maxConcurrency: Type.Optional(
-    Type.Integer({
-      minimum: 1,
-      maximum: MAX_CONCURRENCY,
-      description: `Maximum simultaneous agents; default ${MAX_CONCURRENCY}`,
-    }),
-  ),
 });
 
 interface SubagentDetails {
@@ -86,6 +79,17 @@ export function subagentTaskBlock(
     .map((line) => `> ${line}`)
     .join("\n");
   return `> **${index}. ${label}**\n>\n${quotedTask}`;
+}
+
+export function dashboardSubagentStates(
+  states: readonly SubagentState[],
+): SubagentState[] {
+  const allSettled =
+    states.length > 0 &&
+    states.every((state) =>
+      ["completed", "failed", "aborted"].includes(state.status),
+    );
+  return allSettled ? [] : states.map(cloneSubagentState);
 }
 
 function registerChildTelemetry(pi: ExtensionAPI): void {
@@ -180,7 +184,9 @@ export default function subagentsExtension(pi: ExtensionAPI) {
     states: states.map(cloneSubagentState),
   });
   const publish = () => {
-    pi.events.emit(SUBAGENTS_CHANGED_EVENT, snapshot());
+    pi.events.emit(SUBAGENTS_CHANGED_EVENT, {
+      states: dashboardSubagentStates(states),
+    });
   };
   const updateState = (next: SubagentState) => {
     const index = states.findIndex((state) => state.id === next.id);
@@ -247,7 +253,7 @@ export default function subagentsExtension(pi: ExtensionAPI) {
 
       const results = await mapWithConcurrency(
         tasks,
-        parameters.maxConcurrency ?? MAX_CONCURRENCY,
+        MAX_CONCURRENCY,
         async (task, index) =>
           runSubagent({
             task: {

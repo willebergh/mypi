@@ -10,8 +10,31 @@ import {
   parseSubagentTelemetry,
   subagentCounterWidths,
 } from "../extensions/subagents/core.ts";
-import { subagentTaskBlock } from "../extensions/subagents/index.ts";
+import {
+  SubagentParameters,
+  dashboardSubagentStates,
+  subagentTaskBlock,
+} from "../extensions/subagents/index.ts";
 import { mapWithConcurrency } from "../extensions/subagents/runner.ts";
+
+test("keeps concurrency internal to the subagent backend", () => {
+  assert.deepEqual(Object.keys(SubagentParameters.properties), ["tasks"]);
+  assert.equal(
+    (SubagentParameters.properties.tasks as { maxItems?: number }).maxItems,
+    16,
+  );
+});
+
+test("clears dashboard agents only after every task settles", () => {
+  const first = createSubagentState(1, { task: "One" }, { cwd: "/repo" });
+  const second = createSubagentState(2, { task: "Two" }, { cwd: "/repo" });
+  first.status = "completed";
+  second.status = "running";
+  assert.equal(dashboardSubagentStates([first, second]).length, 2);
+
+  second.status = "failed";
+  assert.deepEqual(dashboardSubagentStates([first, second]), []);
+});
 
 test("formats each delegated task as a separate markdown block", () => {
   assert.equal(
