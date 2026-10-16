@@ -6,7 +6,12 @@ Personal [Pi](https://pi.dev) extensions.
 
 ### Web
 
-Provides provider-neutral web tools backed by dedicated integrations. The current `web_scrape` tool uses Firecrawl to fetch the main content of one known HTTP(S) URL as Markdown. Future search and extraction tools can add Firecrawl, Brave, Exa, or other providers under `extensions/web/providers/` without changing the model-facing tool names.
+Provides provider-neutral web tools backed by dedicated integrations:
+
+- `web_search` searches the live web through OpenAI's hosted Responses web-search tool and returns a concise answer with clickable inline citations. It uses Pi's existing `openai-codex` login and currently runs `gpt-6-luna`; no separate API key or login is needed.
+- `web_scrape` uses Firecrawl to fetch the main content of one known HTTP(S) URL as Markdown.
+
+The provider implementations live under `extensions/web/providers/`, so Firecrawl, Brave, Exa, or other backends can be added without changing the model-facing tool names. To verify hosted search with the current Pi-managed token, run `node scripts/probe-openai-web-search.mjs [optional query]`; it refreshes credentials through Pi and never prints the token.
 
 Copy `.env.example` to `.env` in this package and add `FIRECRAWL_API_KEY`. The extension loads this package-scoped file regardless of the project where Pi is running; variables already present in Pi's environment take precedence. Self-hosted Firecrawl deployments may also set `FIRECRAWL_API_URL`.
 

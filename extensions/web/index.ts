@@ -2,6 +2,7 @@ import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { announceExtension } from "../resource-status/protocol.ts";
 import { loadPackageEnv } from "./config.ts";
 import { registerScrapeTool } from "./tools/scrape.ts";
+import { registerSearchTool } from "./tools/search.ts";
 
 export default function webExtension(pi: ExtensionAPI) {
   loadPackageEnv();
@@ -11,4 +12,5 @@ export default function webExtension(pi: ExtensionAPI) {
   });
 
   registerScrapeTool(pi);
+  registerSearchTool(pi);
 }
