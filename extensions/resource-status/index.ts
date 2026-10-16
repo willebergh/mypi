@@ -21,6 +21,8 @@ import {
   type UsageWindow,
 } from "../openai-usage/core.ts";
 import {
+  formatTokenRate,
+  OutputTokenRate,
   resourceSummary,
   sortedUniqueLabels,
 } from "./core.ts";
@@ -137,6 +139,7 @@ export default function resourceStatus(pi: ExtensionAPI) {
   let editingSessionName = false;
   let requestRender: (() => void) | undefined;
   let elapsedTimer: ReturnType<typeof setInterval> | undefined;
+  const mainTokenRate = new OutputTokenRate();
 
   const refresh = () => requestRender?.();
 
@@ -186,6 +189,28 @@ export default function resourceStatus(pi: ExtensionAPI) {
     refresh();
   });
 
+  pi.on("turn_start", async () => {
+    mainTokenRate.start();
+    refresh();
+  });
+
+  pi.on("message_start", async (event) => {
+    if (event.message.role !== "assistant") return;
+    mainTokenRate.start();
+  });
+
+  pi.on("message_update", async (event) => {
+    if (event.message.role !== "assistant") return;
+    mainTokenRate.update(event.message.usage.output);
+    refresh();
+  });
+
+  pi.on("message_end", async (event) => {
+    if (event.message.role !== "assistant") return;
+    mainTokenRate.finish(event.message.usage.output);
+    refresh();
+  });
+
   pi.events.on(SKILL_LOADED_EVENT, (data) => {
     const skill = data as SkillLoadedPayload;
     if (!skill?.name || !skill.path) return;
@@ -225,7 +250,8 @@ export default function resourceStatus(pi: ExtensionAPI) {
         .filter((file) => isAgentInstructionFile(path.basename(file)))
         .map((file) => path.resolve(ctx.cwd, file)),
     );
-    const skill = parseSkillBlock(event.prompt);
+    // Custom-message wake-ups can start a run without a user prompt.
+    const skill = typeof event.prompt === "string" ? parseSkillBlock(event.prompt) : undefined;
     if (skill) await reportLoadedSkill(skill.location, ctx.cwd, skill.name);
     refresh();
   });
@@ -263,6 +289,7 @@ export default function resourceStatus(pi: ExtensionAPI) {
     sessionStartedAt = Date.now();
     sessionRowSelected = false;
     subagentStates = [];
+    mainTokenRate.reset();
     todoState = { items: [], nextId: 1 };
     loadedSkillPaths.clear();
     for (const entry of ctx.sessionManager.getBranch()) {
@@ -410,12 +437,27 @@ export default function resourceStatus(pi: ExtensionAPI) {
                 ),
               ].map((value) => value.length),
             );
+            const knownSubagentRates = subagentStates
+              .map((state) => state.tokensPerSecond)
+              .filter((rate): rate is number => rate !== undefined && Number.isFinite(rate));
+            const aggregateTokenRate =
+              knownSubagentRates.length > 0
+                ? knownSubagentRates.reduce((sum, rate) => sum + rate, 0)
+                : undefined;
+            const tokenRateWidth = Math.max(
+              ...[
+                mainTokenRate.value,
+                aggregateTokenRate,
+                ...subagentStates.map((state) => state.tokensPerSecond),
+              ].map((rate) => formatTokenRate(rate).length),
+            );
             const metrics = (
               elapsed: string,
               agentFiles: number,
               loadedSkills: number,
               todosCompleted: number,
               todosTotal: number,
+              tokensPerSecond: number | undefined,
               bar: string,
             ) =>
               theme.fg(
@@ -427,6 +469,8 @@ export default function resourceStatus(pi: ExtensionAPI) {
                   `S(${loadedSkills})`.padEnd(skillWidth) +
                   " · " +
                   `T(${todosCompleted}/${todosTotal})`.padEnd(todoWidth) +
+                  " · " +
+                  formatTokenRate(tokensPerSecond).padStart(tokenRateWidth) +
                   " · ",
               ) + bar;
             const row = (left: string, right: string): string[] => {
@@ -509,6 +553,7 @@ export default function resourceStatus(pi: ExtensionAPI) {
                 loadedSkillPaths.size,
                 mainCompleted,
                 todoState.items.length,
+                mainTokenRate.value,
                 mainBar,
               ),
             );
@@ -539,6 +584,7 @@ export default function resourceStatus(pi: ExtensionAPI) {
                     aggregate.skills,
                     aggregate.todosCompleted,
                     aggregate.todosTotal,
+                    aggregateTokenRate,
                     aggregateBar,
                   ),
                 ),
@@ -576,6 +622,7 @@ export default function resourceStatus(pi: ExtensionAPI) {
                         state.loadedSkills,
                         state.todosCompleted,
                         state.todosTotal,
+                        state.tokensPerSecond,
                         bar,
                       ),
                     ),

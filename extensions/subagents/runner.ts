@@ -4,6 +4,7 @@ import {
   RpcClient,
   type JsonAgentSessionEvent,
 } from "@earendil-works/pi-coding-agent";
+import { OutputTokenRate } from "../resource-status/core.ts";
 import {
   applySubagentEvent,
   cloneSubagentState,
@@ -234,6 +235,7 @@ export async function runSubagent(
 
   let visibleSignature = `${state.status}\0${state.activity}\0${state.turns}`;
   let lastContextPublish = 0;
+  const tokenRate = new OutputTokenRate();
   const unsubscribe = client.onEvent((event: JsonAgentSessionEvent) => {
     const telemetry = parseSubagentTelemetry(event);
     if (telemetry) {
@@ -241,6 +243,16 @@ export async function runSubagent(
       state.loadedSkills = telemetry.loadedSkills;
       publish();
       return;
+    }
+
+    if (event.type === "turn_start") {
+      tokenRate.start();
+    } else if (event.type === "message_start" && event.message.role === "assistant") {
+      tokenRate.start();
+    } else if (event.type === "message_update") {
+      state.tokensPerSecond = tokenRate.update(event.usage.output);
+    } else if (event.type === "message_end" && event.message.role === "assistant") {
+      state.tokensPerSecond = tokenRate.finish(event.message.usage.output);
     }
 
     applySubagentEvent(state, event);

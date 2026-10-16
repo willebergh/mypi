@@ -3,6 +3,74 @@ export interface NamedResource {
   label: string;
 }
 
+/** One-second output-token window; retains the last measurement between responses. */
+export class OutputTokenRate {
+  private startedAt: number | undefined;
+  private maximumOutput = 0;
+  private samples: Array<{ at: number; output: number }> = [];
+  private measured = false;
+  private currentRate: number | undefined;
+
+  start(now = Date.now()): void {
+    this.startedAt = now;
+    this.maximumOutput = 0;
+    this.samples = [];
+    this.measured = false;
+  }
+
+  update(outputTokens: number, now = Date.now()): number | undefined {
+    if (!Number.isFinite(outputTokens) || outputTokens < 0) return this.currentRate;
+    if (this.startedAt === undefined) this.start(now);
+    // Zero/reset usage snapshots aren't new token measurements.
+    if (outputTokens <= this.maximumOutput) return this.currentRate;
+    this.maximumOutput = outputTokens;
+    const previous = this.samples.at(-1);
+    if (previous && now < previous.at) return this.currentRate;
+    this.samples.push({ at: now, output: outputTokens });
+    // Keep the sample just before the window boundary as a baseline.
+    while (this.samples.length > 2 && this.samples[1]!.at <= now - 1_000) {
+      this.samples.shift();
+    }
+    const first = this.samples[0]!;
+    const elapsedMs = now - first.at;
+    if (elapsedMs >= 100) {
+      this.currentRate = (outputTokens - first.output) / (elapsedMs / 1_000);
+      this.measured = true;
+    }
+    return this.currentRate;
+  }
+
+  finish(outputTokens: number, now = Date.now()): number | undefined {
+    this.update(outputTokens, now);
+    // If usage arrived only at the end, the response average is all we know.
+    const elapsedMs = now - (this.startedAt ?? now);
+    if (!this.measured && this.maximumOutput > 0 && elapsedMs > 0) {
+      this.currentRate = this.maximumOutput / (elapsedMs / 1_000);
+    }
+    this.startedAt = undefined;
+    this.samples = [];
+    return this.currentRate;
+  }
+
+  reset(): void {
+    this.startedAt = undefined;
+    this.maximumOutput = 0;
+    this.samples = [];
+    this.measured = false;
+    this.currentRate = undefined;
+  }
+
+  get value(): number | undefined {
+    return this.currentRate;
+  }
+}
+
+export function formatTokenRate(rate: number | undefined): string {
+  return rate === undefined || !Number.isFinite(rate)
+    ? "— t/s"
+    : `${Math.max(0, rate).toFixed(1)} t/s`;
+}
+
 export function sortedUniqueLabels(resources: NamedResource[]): string[] {
   const labels = new Map<string, string>();
   for (const resource of resources) labels.set(resource.id, resource.label);

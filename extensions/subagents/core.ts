@@ -43,6 +43,7 @@ export interface SubagentState {
   turns: number;
   usage: SubagentUsage;
   model?: string;
+  tokensPerSecond?: number;
   contextTokens: number;
   contextWindow?: number;
   agentFiles: number;

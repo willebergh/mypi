@@ -20,10 +20,72 @@ import {
   compactProgressBarLayout,
   compactTokens,
   contextProgress,
+  formatTokenRate,
+  OutputTokenRate,
   progressBar,
   resourceSummary,
   sortedUniqueLabels,
 } from "../extensions/resource-status/core.ts";
+
+test("tracks and formats output token throughput", () => {
+  const tracker = new OutputTokenRate();
+  assert.equal(formatTokenRate(tracker.value), "— t/s");
+
+  tracker.start(1_000);
+  assert.equal(tracker.update(10, 1_500), undefined);
+  assert.equal(tracker.update(0, 2_000), undefined);
+  assert.equal(tracker.finish(20, 2_000), 20);
+  assert.equal(formatTokenRate(tracker.value), "20.0 t/s");
+
+  tracker.start(3_000);
+  assert.equal(tracker.value, 20);
+  assert.equal(tracker.update(0, 4_000), 20);
+  tracker.reset();
+  assert.equal(formatTokenRate(tracker.value), "— t/s");
+});
+
+test("uses recent generation speed instead of initial latency or whole-response average", () => {
+  const tracker = new OutputTokenRate();
+  tracker.start(0);
+  tracker.update(0, 4_000);
+  tracker.update(10, 5_000);
+  assert.equal(tracker.update(20, 5_500), 20);
+  assert.equal(tracker.update(30, 6_000), 20);
+  assert.equal(tracker.update(80, 6_500), 60);
+  assert.equal(tracker.update(130, 7_000), 100);
+  assert.equal(tracker.update(0, 7_100), 100);
+  assert.equal(tracker.finish(130, 7_200), 100);
+  tracker.start(8_000);
+  assert.equal(tracker.value, 100);
+  assert.equal(tracker.update(Number.NaN, 8_500), 100);
+  assert.equal(tracker.update(-1, 8_500), 100);
+});
+
+test("falls back to response average for final-only provider usage", () => {
+  const tracker = new OutputTokenRate();
+  tracker.start(1_000);
+  assert.equal(tracker.finish(100, 3_000), 50);
+  tracker.start(4_000);
+  assert.equal(tracker.finish(0, 5_000), 50);
+});
+
+test("handles promptless custom-message wake-ups when tracking skills", async () => {
+  let beforeAgentStart: ((event: any, ctx: any) => Promise<void>) | undefined;
+  resourceStatus({
+    events: { on() {}, emit() {} },
+    on(name: string, handler: any) {
+      if (name === "before_agent_start") beforeAgentStart = handler;
+    },
+    registerCommand() {},
+  } as any);
+
+  assert.ok(beforeAgentStart);
+  const event = {
+    systemPromptOptions: { contextFiles: [{ path: "/repo/AGENTS.md" }] },
+  };
+  await assert.doesNotReject(() => beforeAgentStart!(event, { cwd: "/repo" }));
+  await assert.doesNotReject(() => beforeAgentStart!({ ...event, prompt: "Hello" }, { cwd: "/repo" }));
+});
 
 test("formats stable resource summaries", () => {
   assert.equal(isAgentInstructionFile("AGENTS.md"), true);
@@ -205,6 +267,7 @@ test("renders and refreshes the below-editor resource widget", async () => {
   assert.equal(initial.length, 2);
   assert.match(initial[0], /^Session: Refactor auth\s+$/);
   assert.match(initial[1], /^Main agent\s+0s · A\(0\) · S\(0\) · T\(0\/0\) · /);
+  assert.match(initial[1], /— t\/s/);
   assert.match(initial[1], /\[█5\.6-sol       50\.0%  136k\/272k \]$/);
   assert.doesNotMatch(initial.join("\n"), /Extensions/);
 
@@ -276,6 +339,7 @@ test("renders and refreshes the below-editor resource widget", async () => {
         turns: 1,
         usage: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, cost: 0 },
         model: "openai-codex/gpt-5.6-sol",
+        tokensPerSecond: 12.5,
         contextTokens: 76_000,
         contextWindow: 272_000,
         agentFiles: 5,
@@ -300,7 +364,7 @@ test("renders and refreshes the below-editor resource widget", async () => {
   });
   const dashboard = component.render(200).join("\n");
   assert.match(dashboard, /^Main agent.*T\(1\/7\)/m);
-  assert.match(dashboard, /^Agents\s+2m35s · A\(5\)/m);
+  assert.match(dashboard, /^Agents\s+2m35s · A\(5\).*12\.5 t\/s/m);
   assert.doesNotMatch(dashboard, /Chart architecture/);
   assert.match(dashboard, /Todos \(1\/7 completed\)/);
   assert.match(dashboard, /✓ #1 Completed and hidden/);
@@ -317,4 +381,31 @@ test("renders and refreshes the below-editor resource widget", async () => {
   assert.match(wrapped.join("\n"), /5\.6-sol/);
   assert.match(wrapped.join("\n"), /272k/);
   assert.doesNotMatch(wrapped.join("\n"), /testing/);
+
+  events.emit(SUBAGENTS_CHANGED_EVENT, {
+    states: [
+      {
+        id: 2,
+        label: "Live worker",
+        task: "Build charts",
+        cwd: "/repo",
+        status: "running",
+        activity: "responding",
+        startedAt: Date.now() - 5_000,
+        turns: 1,
+        usage: { input: 100, output: 25, cacheRead: 0, cacheWrite: 0, cost: 0 },
+        model: "openai-codex/gpt-5.6-sol",
+        tokensPerSecond: 12.5,
+        contextTokens: 76_000,
+        contextWindow: 272_000,
+        agentFiles: 1,
+        loadedSkills: 1,
+        todosCompleted: 0,
+        todosTotal: 1,
+      },
+    ],
+  });
+  const liveDashboard = component.render(200).join("\n");
+  assert.match(liveDashboard, /Agents.*12\.5 t\/s/);
+  assert.match(liveDashboard, /#2 Live worker.*12\.5 t\/s/);
 });
