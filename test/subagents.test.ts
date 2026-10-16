@@ -12,16 +12,29 @@ import {
   subagentCounterWidths,
 } from "../extensions/subagents/core.ts";
 import {
+  CancelSubagentsParameters,
+  formatSubagentCompletion,
+  ListSubagentsParameters,
   SubagentParameters,
   subagentTaskBlock,
 } from "../extensions/subagents/index.ts";
-import { mapWithConcurrency } from "../extensions/subagents/runner.ts";
+import {
+  mapWithConcurrency,
+  OperationScheduler,
+  QueuedOperationCancelledError,
+} from "../extensions/subagents/runner.ts";
 
-test("keeps concurrency internal to the subagent backend", () => {
+test("keeps background subagent tools focused", () => {
   assert.deepEqual(Object.keys(SubagentParameters.properties), ["tasks"]);
   assert.equal(
     (SubagentParameters.properties.tasks as { maxItems?: number }).maxItems,
     16,
+  );
+  assert.deepEqual(Object.keys(ListSubagentsParameters.properties), []);
+  assert.deepEqual(Object.keys(CancelSubagentsParameters.properties), ["agentIds"]);
+  assert.equal(
+    (CancelSubagentsParameters.properties.agentIds as { minItems?: number }).minItems,
+    1,
   );
 });
 
@@ -246,4 +259,58 @@ test("limits concurrent subagent operations while preserving result order", asyn
 
   assert.equal(peak, 2);
   assert.deepEqual(results, [0, 1, 2, 3]);
+});
+
+test("shares a fixed concurrency limit across scheduled background work", async () => {
+  const scheduler = new OperationScheduler(2);
+  let active = 0;
+  let peak = 0;
+  const operations = [20, 5, 10, 1].map((delay, index) =>
+    scheduler.schedule(async () => {
+      active += 1;
+      peak = Math.max(peak, active);
+      await new Promise((resolve) => setTimeout(resolve, delay));
+      active -= 1;
+      return index;
+    }).promise,
+  );
+
+  assert.deepEqual(await Promise.all(operations), [0, 1, 2, 3]);
+  assert.equal(peak, 2);
+});
+
+test("cancels queued background work without starting it", async () => {
+  const scheduler = new OperationScheduler(1);
+  let release!: () => void;
+  const first = scheduler.schedule(
+    () => new Promise<number>((resolve) => {
+      release = () => resolve(1);
+    }),
+  );
+  let secondStarted = false;
+  const second = scheduler.schedule(async () => {
+    secondStarted = true;
+    return 2;
+  });
+
+  assert.equal(second.cancel(), true);
+  await assert.rejects(second.promise, QueuedOperationCancelledError);
+  assert.equal(secondStarted, false);
+  release();
+  assert.equal(await first.promise, 1);
+});
+
+test("formats terminal outcomes as bounded delegated context", () => {
+  const state = createSubagentState(
+    7,
+    { task: "Inspect auth", label: "Auth review" },
+    { cwd: "/repo" },
+  );
+  state.status = "completed";
+  state.result = "Found a missing authorization check.";
+
+  const message = formatSubagentCompletion(state);
+  assert.match(message, /Background subagent #7 “Auth review” completed\./);
+  assert.match(message, /not a new user instruction/);
+  assert.match(message, /Found a missing authorization check\./);
 });

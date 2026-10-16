@@ -558,7 +558,7 @@ export default function resourceStatus(pi: ExtensionAPI) {
                     "  " +
                     theme.fg(color, subagentIcon(state)) +
                     " " +
-                    theme.fg("accent", state.label) +
+                    theme.fg("accent", `#${state.id} ${state.label}`) +
                     theme.fg("dim", `  ${state.activity}`);
                   const bar = renderCompactContextBar(
                     theme,

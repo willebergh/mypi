@@ -13,7 +13,84 @@ import {
 } from "./core.ts";
 
 const DEFAULT_TIMEOUT_MS = 30 * 60 * 1_000;
-const EXCLUDED_CHILD_TOOLS = ["subagent", "ask_user", "mcp"];
+const EXCLUDED_CHILD_TOOLS = [
+  "subagent",
+  "list_subagents",
+  "cancel_subagents",
+  "ask_user",
+  "mcp",
+];
+
+export class QueuedOperationCancelledError extends Error {
+  constructor() {
+    super("Queued operation was cancelled");
+    this.name = "QueuedOperationCancelledError";
+  }
+}
+
+export interface ScheduledOperation<T> {
+  promise: Promise<T>;
+  /** Returns true only when an operation was removed before it started. */
+  cancel(): boolean;
+}
+
+interface QueueEntry<T> {
+  started: boolean;
+  operation(): Promise<T>;
+  resolve(value: T): void;
+  reject(error: unknown): void;
+}
+
+/** Shared concurrency gate for background subagents across every start call. */
+export class OperationScheduler {
+  private active = 0;
+  private readonly pending: QueueEntry<unknown>[] = [];
+  private readonly concurrency: number;
+
+  constructor(concurrency: number) {
+    if (!Number.isInteger(concurrency) || concurrency < 1) {
+      throw new Error("Scheduler concurrency must be a positive integer");
+    }
+    this.concurrency = concurrency;
+  }
+
+  schedule<T>(operation: () => Promise<T>): ScheduledOperation<T> {
+    let entry: QueueEntry<T>;
+    const promise = new Promise<T>((resolve, reject) => {
+      entry = { started: false, operation, resolve, reject };
+      this.pending.push(entry as QueueEntry<unknown>);
+    });
+    this.drain();
+
+    return {
+      promise,
+      cancel: () => {
+        if (entry.started) return false;
+        const index = this.pending.indexOf(entry as QueueEntry<unknown>);
+        if (index < 0) return false;
+        this.pending.splice(index, 1);
+        entry.reject(new QueuedOperationCancelledError());
+        return true;
+      },
+    };
+  }
+
+  private drain(): void {
+    while (this.active < this.concurrency && this.pending.length > 0) {
+      const entry = this.pending.shift();
+      if (!entry) return;
+      entry.started = true;
+      this.active += 1;
+      void Promise.resolve()
+        .then(entry.operation)
+        .then(entry.resolve, entry.reject)
+        .finally(() => {
+          this.active -= 1;
+          this.drain();
+        });
+    }
+  }
+}
 
 export interface RunSubagentOptions {
   task: SubagentTask;
@@ -65,6 +142,75 @@ function errorText(error: unknown, stderr: string): string {
   if (!detail || message.includes(detail)) return message;
   const tail = detail.length > 2_000 ? detail.slice(-2_000) : detail;
   return `${message}\n${tail}`;
+}
+
+/** Waits for settlement while polling RPC state so a dead child frees its slot promptly. */
+async function promptAndWait(
+  client: RpcClient,
+  task: string,
+  signal: AbortSignal | undefined,
+  timeoutMs: number,
+): Promise<void> {
+  await new Promise<void>((resolve, reject) => {
+    let settled = false;
+    let checking = false;
+    let liveness: ReturnType<typeof setInterval> | undefined;
+    const finish = (error?: unknown) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timeout);
+      if (liveness) clearInterval(liveness);
+      unsubscribe();
+      signal?.removeEventListener("abort", abort);
+      if (error === undefined) resolve();
+      else reject(error);
+    };
+    const abort = () => finish(new Error("Subagent run aborted"));
+    const unsubscribe = client.onEvent((event) => {
+      if (event.type === "agent_settled") finish();
+    });
+    const timeout = setTimeout(
+      () => finish(new Error("Timeout waiting for subagent to settle")),
+      timeoutMs,
+    );
+    const startLivenessPolling = () => {
+      if (liveness || settled) return;
+      liveness = setInterval(() => {
+        if (checking || settled) return;
+        checking = true;
+        void client.getState().then(
+          (state) => {
+            checking = false;
+            if (!state.isStreaming) {
+              finish(new Error("Subagent stopped without a settlement event"));
+            }
+          },
+          (error) => finish(error),
+        );
+      }, 1_000);
+      liveness.unref?.();
+    };
+    timeout.unref?.();
+    signal?.addEventListener("abort", abort, { once: true });
+
+    if (signal?.aborted) {
+      finish(new Error("Subagent run aborted"));
+      return;
+    }
+    void client.prompt(task).then(
+      async () => {
+        if (settled) return;
+        const state = await client.getState();
+        if (settled) return;
+        if (!state.isStreaming) {
+          finish(new Error("Subagent prompt was rejected before starting"));
+          return;
+        }
+        startLivenessPolling();
+      },
+      finish,
+    ).catch(finish);
+  });
 }
 
 export async function runSubagent(
@@ -130,9 +276,10 @@ export async function runSubagent(
     }
     if (signal?.aborted) throw new Error("Subagent run aborted");
 
-    await client.promptAndWait(
+    await promptAndWait(
+      client,
       task.task,
-      undefined,
+      signal,
       options.timeoutMs ?? DEFAULT_TIMEOUT_MS,
     );
 
