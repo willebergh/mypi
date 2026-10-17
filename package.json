@@ -10,7 +10,8 @@
   },
   "scripts": {
     "check": "tsc --noEmit",
-    "test": "node --test test/*.test.ts"
+    "test": "node --test test/*.test.ts",
+    "probe:image": "node scripts/probe-openai-image-generation.mjs"
   },
   "peerDependencies": {
     "@earendil-works/pi-ai": "*",

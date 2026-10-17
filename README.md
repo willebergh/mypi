@@ -13,6 +13,12 @@ Provides provider-neutral web tools backed by dedicated integrations:
 
 The provider implementations live under `extensions/web/providers/`, so Firecrawl, Brave, Exa, or other backends can be added without changing the model-facing tool names. To verify hosted search with the current Pi-managed token, run `node scripts/probe-openai-web-search.mjs [optional query]`; it refreshes credentials through Pi and never prints the token.
 
+### Image-generation probe
+
+Run `npm run probe:image` to test Codex's image-generation endpoint with Pi's existing `openai-codex` login. It defaults to the Codex-managed `gpt-image-2` request and saves successful output under ignored `tmp/openai-image-probe/`. Pass `-- --route codex-images --model MODEL` to try another requested model, or use `--route images` / `--route responses` to compare the public OpenAI routes. The probe never prints the token.
+
+The ChatGPT endpoint is undocumented and server-managed: it currently accepts even invalid model names, so a successful request does not prove that the requested model was selected. Public OpenAI image models require an API token with image scopes rather than the Codex OAuth token.
+
 Copy `.env.example` to `.env` in this package and add `FIRECRAWL_API_KEY`. The extension loads this package-scoped file regardless of the project where Pi is running; variables already present in Pi's environment take precedence. Self-hosted Firecrawl deployments may also set `FIRECRAWL_API_URL`.
 
 ```bash
@@ -23,6 +29,12 @@ cp .env.example .env
 Large scrape responses are truncated in model context and saved in full to a temporary Markdown file.
 
 The `axios` override in `package.json` is intentional: the Firecrawl SDK currently pins an older vulnerable release. Remove the override once Firecrawl ships with a patched Axios dependency.
+
+### Image generation
+
+Adds `generate_image`, backed by Codex's image-generation endpoint and Pi's existing `openai-codex` login. It accepts a detailed prompt, a required absolute PNG output path, and optional aspect ratio and background mode. Each call saves the full PNG and also returns the image inline so the model can inspect it. Parent directories are created, and existing files are never overwritten.
+
+The request uses Codex's `gpt-image-2` identifier, but the service controls the effective image model and does not report it. The tool therefore labels results as server-managed and does not expose a misleading model selector. This is an undocumented ChatGPT endpoint and may require updates if OpenAI changes it.
 
 ### Context viewer
 
