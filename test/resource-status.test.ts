@@ -4,6 +4,7 @@ import { visibleWidth } from "@earendil-works/pi-tui";
 import resourceStatus from "../extensions/resource-status/index.ts";
 import { renderCompactContextBar } from "../extensions/resource-status/context-bar.ts";
 import {
+  DICTATION_CHANGED_EVENT,
   EXTENSION_LOADED_EVENT,
   NESTED_AGENTS_CHANGED_EVENT,
   OPENAI_USAGE_CHANGED_EVENT,
@@ -11,6 +12,9 @@ import {
   SKILLS_CHANGED_EVENT,
   SUBAGENTS_CHANGED_EVENT,
   TODOS_CHANGED_EVENT,
+  TALK_CHANGED_EVENT,
+  TALK_STATUS_CHANGED_EVENT,
+  type TalkStatusPayload,
   isAgentInstructionFile,
 } from "../extensions/resource-status/protocol.ts";
 import {
@@ -265,7 +269,7 @@ test("renders and refreshes the below-editor resource widget", async () => {
   );
   const initial = component.render(200);
   assert.equal(initial.length, 2);
-  assert.match(initial[0], /^Session: Refactor auth\s+$/);
+  assert.match(initial[0], /^Session: Refactor auth\s+○ Mic off$/);
   assert.match(initial[1], /^Main agent\s+0s · A\(0\) · S\(0\) · T\(0\/0\) · /);
   assert.match(initial[1], /— t\/s/);
   assert.match(initial[1], /\[█5\.6-sol       50\.0%  136k\/272k \]$/);
@@ -315,7 +319,7 @@ test("renders and refreshes the below-editor resource widget", async () => {
   const usageDashboard = component.render(200);
   assert.match(
     usageDashboard[0],
-    /^Session: Refactor auth\s+\[█Weekly████████75\.0%████    ↻3d \]$/,
+    /^Session: Refactor auth\s+○ Mic off \[█Weekly████████75\.0%████    ↻3d \]$/,
   );
   const usageLines = usageDashboard.filter((line: string) =>
     line.trimStart().startsWith("[█"),
@@ -323,6 +327,36 @@ test("renders and refreshes the below-editor resource widget", async () => {
   assert.deepEqual(usageLines.map((line: string) => line.trimStart()), [
     "[█5h█████       25.0%        ↻2h ]",
   ]);
+
+  for (const [state, label] of [
+    ["connecting", "◌ Connecting"],
+    ["listening", "● Listening"],
+    ["finishing", "◌ Transcribing"],
+    ["idle", "○ Mic off"],
+  ] as const) {
+    events.emit(DICTATION_CHANGED_EVENT, state);
+    assert.match(component.render(200)[0], new RegExp(label.replace(/[.*+?^${}()|[\\]\\]/g, "\\\\$&")));
+  }
+  events.emit(DICTATION_CHANGED_EVENT, "bogus");
+  assert.match(component.render(200)[0], /○ Mic off/);
+
+  for (const [state, label] of [
+    ["connecting", "◌ Talk connecting"],
+    ["listening", "● Talk live"],
+    ["closing", "◌ Talk stopping"],
+  ] as const) {
+    events.emit(TALK_CHANGED_EVENT, state);
+    assert.match(component.render(200)[0], new RegExp(label));
+  }
+  events.emit(TALK_CHANGED_EVENT, "unknown");
+  assert.match(component.render(200)[0], /◌ Talk stopping/);
+  events.emit(TALK_CHANGED_EVENT, "idle");
+  assert.match(component.render(200)[0], /○ Mic off/);
+  events.emit(DICTATION_CHANGED_EVENT, "listening");
+  events.emit(TALK_CHANGED_EVENT, "listening");
+  assert.match(component.render(200)[0], /● Talk live/);
+  events.emit(TALK_CHANGED_EVENT, "idle");
+  assert.match(component.render(200)[0], /● Listening/);
 
   const endedAt = Date.now();
   events.emit(SUBAGENTS_CHANGED_EVENT, {
@@ -408,4 +442,243 @@ test("renders and refreshes the below-editor resource widget", async () => {
   const liveDashboard = component.render(200).join("\n");
   assert.match(liveDashboard, /Agents.*12\.5 t\/s/);
   assert.match(liveDashboard, /#2 Live worker.*12\.5 t\/s/);
+});
+
+async function talkDashboard(t: { after(fn: () => Promise<void>): void }) {
+  const lifecycle = new Map<string, (event: any, ctx: any) => Promise<void>>();
+  const bus = new Map<string, (data: unknown) => void>();
+  let factory: any;
+  let renders = 0;
+  const events = {
+    on(name: string, handler: (data: unknown) => void) { bus.set(name, handler); },
+    emit(name: string, data: unknown) { bus.get(name)?.(data); },
+  };
+  resourceStatus({
+    events,
+    on(name: string, handler: any) { lifecycle.set(name, handler); },
+    getSessionName: () => "Talk dashboard",
+    registerCommand() {},
+  } as any);
+  const ctx = {
+    mode: "tui",
+    model: { id: "gpt-5.6-sol", contextWindow: 272_000 },
+    getContextUsage: () => ({ tokens: 136_000, contextWindow: 272_000, percent: 50 }),
+    sessionManager: { getBranch: () => [] },
+    ui: {
+      setWidget(_key: string, next: any, options: any) {
+        if (next) assert.deepEqual(options, { placement: "belowEditor" });
+        factory = next;
+      },
+      setFooter() {},
+      setEditorComponent() {},
+    },
+  };
+  const lifecycleEvent = async (name: string) => { await lifecycle.get(name)?.({}, ctx); };
+  const start = async () => {
+    await lifecycleEvent("session_start");
+    return factory({ requestRender: () => renders++ }, {
+      fg: (_color: string, text: string) => text,
+      bg: (_color: string, text: string) => text,
+      inverse: (text: string) => text,
+    });
+  };
+  const component = await start();
+  t.after(() => lifecycleEvent("session_shutdown"));
+  events.emit(OPENAI_USAGE_CHANGED_EVENT, {
+    status: "ready",
+    snapshot: {
+      updatedAt: Date.now(),
+      secondary: { label: "weekly", remainingPercent: 25, resetAfterSeconds: 259_200 },
+    },
+  });
+  return { events, component, start, lifecycleEvent, renders: () => renders };
+}
+
+test("Talk progress and supplied live timer render in the dashboard mic slot", async (t) => {
+  assert.equal(TALK_STATUS_CHANGED_EVENT, "mypi:talk-status-changed");
+  assert.equal(TALK_CHANGED_EVENT, "mypi:talk-changed");
+  const { events, component, renders } = await talkDashboard(t);
+  const status = (payload: TalkStatusPayload) => events.emit(TALK_STATUS_CHANGED_EVENT, payload);
+  for (const detail of ["summarizing…", "connecting…"]) {
+    const before = renders();
+    status({ state: "connecting", detail });
+    assert.equal(renders(), before + 1);
+    const lines = component.render(200);
+    assert.equal(lines.length, 2);
+    assert.match(lines[0], /^Session: Talk dashboard\s+◌ Talk: /);
+    assert.ok(lines[0].includes(`Talk: ${detail} [█Weekly`));
+    assert.match(lines[1], /^Main agent.*5\.6-sol/);
+  }
+  for (const [elapsedMs, label] of [
+    [0, "00:00"], [999, "00:00"], [1_000, "00:01"],
+    [83_999, "01:23"], [3_600_000, "60:00"],
+  ] as const) {
+    status({ state: "listening", elapsedMs });
+    assert.ok(component.render(200)[0].includes(`● Talk live ${label} [█Weekly`));
+  }
+  status({ state: "listening", elapsedMs: 83_000 });
+  t.mock.method(Date, "now", () => 9_999_999_999_999);
+  events.emit(TALK_CHANGED_EVENT, "listening");
+  assert.match(component.render(200)[0], /Talk live 01:23/);
+  status({ state: "listening" });
+  assert.match(component.render(200)[0], /Talk live \[█Weekly/);
+  assert.doesNotMatch(component.render(200)[0], /01:23/);
+  status({ state: "closing" });
+  assert.match(component.render(200)[0], /Talk stopping… \[█Weekly/);
+});
+
+test("FaceTime standby stays in the mic slot and normal idle clears it", async (t) => {
+  const { events, component, renders } = await talkDashboard(t);
+  const status = (payload: TalkStatusPayload) => events.emit(TALK_STATUS_CHANGED_EVENT, payload);
+  for (const detail of [undefined, "standby", " unavailable ", "busy", "ending"]) {
+    const before = renders();
+    status({ state: "idle", mode: "facetime", detail, elapsedMs: 83_000 });
+    assert.equal(renders(), before + 1);
+    const lines = component.render(200);
+    assert.equal(lines.length, 2);
+    assert.ok(lines[0].includes(`○ FaceTime ${detail?.trim() ?? "standby"} [█Weekly`));
+    assert.doesNotMatch(lines.join("\n"), /Mic off|01:23|Talk:/);
+  }
+  status({ state: "idle" });
+  assert.match(component.render(200)[0], /○ Mic off/);
+  assert.doesNotMatch(component.render(200).join("\n"), /FaceTime/);
+  status({ state: "idle", mode: "facetime", detail: "standby" });
+  events.emit(TALK_CHANGED_EVENT, "idle");
+  assert.match(component.render(200)[0], /○ Mic off/);
+});
+
+test("FaceTime transitions preserve standard Talk progress and supplied timer", async (t) => {
+  const { events, component, start, lifecycleEvent } = await talkDashboard(t);
+  const status = (payload: TalkStatusPayload) => events.emit(TALK_STATUS_CHANGED_EVENT, payload);
+  const standby = () => status({ state: "idle", mode: "facetime", detail: "standby" });
+  standby();
+  events.emit(TALK_CHANGED_EVENT, "connecting");
+  assert.match(component.render(200)[0], /◌ Talk connecting/);
+  assert.doesNotMatch(component.render(200)[0], /FaceTime|standby/);
+  status({ state: "connecting", mode: "facetime", detail: "connecting…" });
+  assert.match(component.render(200)[0], /◌ Talk: connecting…/);
+  status({ state: "listening", mode: "facetime", elapsedMs: 83_000 });
+  events.emit(TALK_CHANGED_EVENT, "listening");
+  assert.match(component.render(200)[0], /● Talk live 01:23/);
+  status({ state: "closing", mode: "facetime", detail: "ending" });
+  assert.match(component.render(200)[0], /◌ Talk: ending/);
+  standby();
+  assert.match(component.render(200)[0], /○ FaceTime standby/);
+  assert.doesNotMatch(component.render(200)[0], /01:23|ending/);
+  await lifecycleEvent("session_shutdown");
+  assert.match(component.render(200)[0], /○ Mic off/);
+  // A new/reloaded session must also discard status received between sessions.
+  standby();
+  const next = await start();
+  assert.match(next.render(200)[0], /○ Mic off/);
+  assert.doesNotMatch(next.render(200)[0], /FaceTime/);
+});
+
+test("FaceTime standby detail is validated and bounded at narrow widths", async (t) => {
+  const { events, component, renders } = await talkDashboard(t);
+  events.emit(TALK_STATUS_CHANGED_EVENT, { state: "idle", mode: "facetime", detail: "standby" });
+  const before = renders();
+  for (const mode of [null, "", "FaceTime", "talk", "unknown", 1, {}, []]) {
+    events.emit(TALK_STATUS_CHANGED_EVENT, { state: "idle", mode, detail: "bad mode" });
+  }
+  for (const detail of [null, 1, "x".repeat(161), "bad\nline", "\u001b[2J", "bad\u202eline"]) {
+    events.emit(TALK_STATUS_CHANGED_EVENT, { state: "idle", mode: "facetime", detail });
+  }
+  assert.equal(renders(), before);
+  assert.match(component.render(200)[0], /○ FaceTime standby/);
+  events.emit(TALK_STATUS_CHANGED_EVENT, {
+    state: "idle", mode: "facetime", detail: "界🙂".repeat(53) + "x",
+  });
+  assert.equal(renders(), before + 1);
+  const wide = component.render(200);
+  assert.equal(wide.length, 2);
+  assert.ok(visibleWidth(wide[0].slice(wide[0].indexOf("○"), wide[0].indexOf("[█Weekly"))) <= 65);
+  for (let width = 1; width <= 100; width++) {
+    const lines = component.render(width);
+    assert.ok(lines.every((line: string) => visibleWidth(line) <= width), `width ${width}`);
+    if (width >= 24) {
+      assert.match(lines.join("\n"), /Weekly/);
+      assert.match(lines.join("\n"), /75\.0%/);
+      assert.match(lines.join("\n"), /5\.6-sol/);
+      assert.match(lines.join("\n"), /136k\/272k/);
+    }
+  }
+});
+
+test("Talk dashboard ignores malformed status payloads without refreshing", async (t) => {
+  const { events, component, renders } = await talkDashboard(t);
+  events.emit(TALK_STATUS_CHANGED_EVENT, { state: "connecting", detail: "summarizing…" });
+  const before = renders();
+  for (const payload of [
+    null, undefined, [], "listening", 3,
+    { state: "bogus" }, { detail: "missing state" },
+    Object.assign([], { state: "idle" }),
+    Object.assign(new Date(), { state: "idle" }),
+    ...[null, 42, {}, "x".repeat(161), "bad\nline", "bad\rline", "bad\tline",
+      "\u001b[2J", "\u009b2J", "bad\u0007", "bad\u2028line", "bad\u202e"].map(
+      (detail) => ({ state: "idle", detail }),
+    ),
+    ...[null, "123", -1, NaN, Infinity, -Infinity, {}].map(
+      (elapsedMs) => ({ state: "idle", elapsedMs }),
+    ),
+  ]) {
+    assert.doesNotThrow(() => events.emit(TALK_STATUS_CHANGED_EVENT, payload));
+    assert.match(component.render(200)[0], /Talk: summarizing…/);
+  }
+  assert.equal(renders(), before);
+  events.emit(TALK_STATUS_CHANGED_EVENT, { state: "connecting", detail: "x".repeat(160), elapsedMs: Number.MAX_VALUE });
+  assert.equal(renders(), before + 1);
+});
+
+test("Talk detail is bounded at narrow widths without erasing usage or model rows", async (t) => {
+  const { events, component } = await talkDashboard(t);
+  events.emit(TALK_STATUS_CHANGED_EVENT, {
+    state: "connecting", detail: "summarizing… " + "界🙂".repeat(45),
+  });
+  const wide = component.render(200);
+  assert.equal(wide.length, 2);
+  assert.ok(visibleWidth(wide[0].slice(wide[0].indexOf("◌"), wide[0].indexOf("[█Weekly"))) <= 65);
+  for (let width = 1; width <= 100; width++) {
+    const lines = component.render(width);
+    assert.ok(lines.every((line: string) => visibleWidth(line) <= width), `width ${width}`);
+    if (width >= 24) {
+      assert.match(lines.join("\n"), /Weekly/);
+      assert.match(lines.join("\n"), /75\.0%/);
+      assert.match(lines.join("\n"), /5\.6-sol/);
+      assert.match(lines.join("\n"), /136k\/272k/);
+    }
+  }
+});
+
+test("Talk idle, legacy transitions, and session lifecycle clear stale detail and timer", async (t) => {
+  const { events, component, start, lifecycleEvent } = await talkDashboard(t);
+  const live = () => events.emit(TALK_STATUS_CHANGED_EVENT, {
+    state: "listening", detail: "active detail", elapsedMs: 83_000,
+  });
+  events.emit(DICTATION_CHANGED_EVENT, "listening");
+  live();
+  events.emit(TALK_STATUS_CHANGED_EVENT, { state: "idle", detail: "stale", elapsedMs: 83_000 });
+  assert.match(component.render(200)[0], /● Listening/);
+  events.emit(TALK_CHANGED_EVENT, "connecting");
+  assert.doesNotMatch(component.render(200)[0], /active detail|stale|01:23/);
+  live();
+  events.emit(TALK_CHANGED_EVENT, "closing");
+  assert.match(component.render(200)[0], /Talk stopping/);
+  assert.doesNotMatch(component.render(200)[0], /active detail|01:23/);
+  live();
+  events.emit(TALK_CHANGED_EVENT, "idle");
+  events.emit(TALK_CHANGED_EVENT, "listening");
+  assert.doesNotMatch(component.render(200)[0], /active detail|01:23/);
+  live();
+  await lifecycleEvent("session_shutdown");
+  assert.match(component.render(200)[0], /○ Mic off/);
+  const next = await start();
+  assert.match(next.render(200)[0], /○ Mic off/);
+  live();
+  // Startup must also clear status received between sessions.
+  await lifecycleEvent("session_shutdown");
+  events.emit(TALK_STATUS_CHANGED_EVENT, { state: "connecting", detail: "old session" });
+  const restarted = await start();
+  events.emit(TALK_CHANGED_EVENT, "connecting");
+  assert.doesNotMatch(restarted.render(200)[0], /old session|active detail|01:23/);
 });

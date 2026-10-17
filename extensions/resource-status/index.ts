@@ -38,6 +38,7 @@ import {
   renderCompactProgressBar,
 } from "./context-bar.ts";
 import {
+  DICTATION_CHANGED_EVENT,
   EXTENSION_LOADED_EVENT,
   NESTED_AGENTS_CHANGED_EVENT,
   OPENAI_USAGE_CHANGED_EVENT,
@@ -45,7 +46,12 @@ import {
   SKILLS_CHANGED_EVENT,
   SUBAGENTS_CHANGED_EVENT,
   TODOS_CHANGED_EVENT,
+  TALK_CHANGED_EVENT,
+  TALK_STATUS_CHANGED_EVENT,
   announceExtension,
+  type DictationState,
+  type TalkState,
+  type TalkStatusPayload,
   type ExtensionLoadedPayload,
   type NestedAgentsChangedPayload,
   type SkillLoadedPayload,
@@ -56,6 +62,31 @@ import {
 } from "./protocol.ts";
 
 const WIDGET_KEY = "mypi-resource-status";
+
+function isTalkState(value: unknown): value is TalkState {
+  return value === "idle" || value === "connecting" ||
+    value === "listening" || value === "closing";
+}
+
+function isTalkStatusPayload(value: unknown): value is TalkStatusPayload {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return false;
+  const prototype = Object.getPrototypeOf(value);
+  if (prototype !== Object.prototype && prototype !== null) return false;
+  const payload = value as TalkStatusPayload;
+  return isTalkState(payload.state) &&
+    (payload.mode === undefined || payload.mode === "facetime") &&
+    (payload.detail === undefined ||
+      (typeof payload.detail === "string" && payload.detail.length <= 160 &&
+        !/[\u0000-\u001f\u007f-\u009f\u2028\u2029\u202a-\u202e\u2066-\u2069]/u.test(payload.detail))) &&
+    (payload.elapsedMs === undefined ||
+      (typeof payload.elapsedMs === "number" &&
+        Number.isFinite(payload.elapsedMs) && payload.elapsedMs >= 0));
+}
+
+function talkElapsedLabel(milliseconds: number): string {
+  const seconds = Math.floor(milliseconds / 1_000);
+  return `${String(Math.floor(seconds / 60)).padStart(2, "0")}:${String(seconds % 60).padStart(2, "0")}`;
+}
 
 interface SessionRowControls {
   isSelected(): boolean;
@@ -131,6 +162,9 @@ export default function resourceStatus(pi: ExtensionAPI) {
   let loadedAgentDirectories: string[] = [];
   let baseAgentFiles = new Set<string>();
   let openAiUsage: OpenAiUsageState = { status: "inactive" };
+  let dictationState: DictationState = "idle";
+  let talkState: TalkState = "idle";
+  let talkStatus: TalkStatusPayload | undefined;
   let subagentStates: SubagentState[] = [];
   let todoState: TodoState = { items: [], nextId: 1 };
   let sessionName: string | undefined;
@@ -169,6 +203,38 @@ export default function resourceStatus(pi: ExtensionAPI) {
         }),
       ),
     ].sort((a, b) => a.localeCompare(b));
+    refresh();
+  });
+
+  pi.events.on(DICTATION_CHANGED_EVENT, (data) => {
+    if (
+      data === "idle" ||
+      data === "connecting" ||
+      data === "listening" ||
+      data === "finishing"
+    ) {
+      dictationState = data;
+      refresh();
+    }
+  });
+
+  pi.events.on(TALK_CHANGED_EVENT, (data) => {
+    if (!isTalkState(data)) return;
+    // Same-state legacy announcements must not erase a richer status tick.
+    if (data === "idle" || data !== talkState) talkStatus = undefined;
+    talkState = data;
+    refresh();
+  });
+
+  pi.events.on(TALK_STATUS_CHANGED_EVENT, (data) => {
+    if (!isTalkStatusPayload(data)) return;
+    talkState = data.state;
+    talkStatus = data.state === "idle" && data.mode !== "facetime" ? undefined : {
+      state: data.state,
+      mode: data.mode,
+      detail: data.detail?.trim() || undefined,
+      elapsedMs: data.elapsedMs,
+    };
     refresh();
   });
 
@@ -288,6 +354,9 @@ export default function resourceStatus(pi: ExtensionAPI) {
     sessionName = pi.getSessionName();
     sessionStartedAt = Date.now();
     sessionRowSelected = false;
+    dictationState = "idle";
+    talkState = "idle";
+    talkStatus = undefined;
     subagentStates = [];
     mainTokenRate.reset();
     todoState = { items: [], nextId: 1 };
@@ -541,9 +610,42 @@ export default function resourceStatus(pi: ExtensionAPI) {
                     compactModelLabel(model?.id),
                   )
                 : theme.fg("dim", "[Context unavailable             ]");
+            const dictationIndicator =
+              talkState === "connecting"
+                ? theme.fg("warning", "◌ Talk connecting")
+                : talkState === "listening"
+                  ? theme.fg("success", "● Talk live")
+                  : talkState === "closing"
+                    ? theme.fg("dim", "◌ Talk stopping")
+                    : dictationState === "listening"
+                ? theme.fg("success", "● Listening")
+                : dictationState === "connecting"
+                  ? theme.fg("warning", "◌ Connecting")
+                  : dictationState === "finishing"
+                    ? theme.fg("accent", "◌ Transcribing")
+                    : theme.fg("dim", "○ Mic off");
+            const talkIndicator = talkStatus
+              ? talkState === "idle"
+                ? theme.fg("dim", `○ FaceTime ${talkStatus.detail ?? "standby"}`)
+                : talkState === "listening"
+                ? theme.fg("success", "● Talk live" +
+                    (talkStatus.elapsedMs === undefined ? "" : ` ${talkElapsedLabel(talkStatus.elapsedMs)}`) +
+                    (talkStatus.detail ? ` · ${talkStatus.detail}` : ""))
+                : theme.fg(talkState === "closing" ? "dim" : "warning",
+                    talkStatus.detail
+                      ? `◌ Talk: ${talkStatus.detail}`
+                      : talkState === "closing" ? "◌ Talk stopping…" : "◌ Talk: connecting…")
+              : dictationIndicator;
+            const weeklyBar = weeklyWindow ? usageBar(weeklyWindow) : "";
+            // Bound the mic slot, not the whole row: keep usage and model bars
+            // intact, letting row() wrap them on very narrow terminals.
+            const micWidth = Math.min(64, Math.max(16,
+              availableWidth - visibleWidth(weeklyBar) - 3));
             const sessionRows = row(
               theme.fg("dim", `Session: ${sessionName || "Unnamed"}`),
-              weeklyWindow ? usageBar(weeklyWindow) : "",
+              [truncateToWidth(talkIndicator, micWidth, "…"), weeklyBar]
+                .filter(Boolean)
+                .join(" "),
             );
             const mainRows = row(
               theme.fg("accent", "Main agent"),
@@ -737,6 +839,9 @@ export default function resourceStatus(pi: ExtensionAPI) {
   pi.on("session_shutdown", async (_event, ctx) => {
     if (elapsedTimer) clearInterval(elapsedTimer);
     elapsedTimer = undefined;
+    dictationState = "idle";
+    talkState = "idle";
+    talkStatus = undefined;
     requestRender = undefined;
     if (ctx.mode === "tui") {
       ctx.ui.setWidget(WIDGET_KEY, undefined);

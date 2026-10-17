@@ -20,6 +20,8 @@ import {
   type UserQuestion,
 } from "./core.ts";
 
+import { requestVoiceQuestions } from "./voice.ts";
+
 const OptionSchema = Type.Object({
   label: Type.String({ description: "Answer shown to the user" }),
   description: Type.Optional(
@@ -92,7 +94,7 @@ export default function askUserExtension(pi: ExtensionAPI) {
     parameters: AskUserParameters,
     executionMode: "sequential",
 
-    async execute(_toolCallId, parameters, _signal, _onUpdate, ctx) {
+    async execute(_toolCallId, parameters, signal, _onUpdate, ctx) {
       const questions = normalizeQuestions(parameters.questions as RawQuestion[]);
       if (ctx.mode !== "tui") {
         const result: AskUserResult = {
@@ -107,6 +109,25 @@ export default function askUserExtension(pi: ExtensionAPI) {
               text: "Interactive questions require Pi's terminal UI",
             },
           ],
+          details: result,
+        };
+      }
+
+      if (signal?.aborted) {
+        const result: AskUserResult = { questions, answers: [], cancelled: true };
+        return {
+          content: [{ type: "text", text: formatAskUserResult(result) }],
+          details: result,
+        };
+      }
+
+      const voiceResult = await requestVoiceQuestions(pi.events, questions, signal);
+      if (voiceResult !== undefined || signal?.aborted) {
+        const result: AskUserResult = signal?.aborted
+          ? { questions, answers: [], cancelled: true }
+          : voiceResult!;
+        return {
+          content: [{ type: "text", text: formatAskUserResult(result) }],
           details: result,
         };
       }
@@ -135,7 +156,23 @@ export default function askUserExtension(pi: ExtensionAPI) {
           };
           const editor = new Editor(tui, editorTheme);
 
+          let completed = false;
+          let listening = false;
+          const cleanup = () => {
+            if (!listening) return;
+            listening = false;
+            signal?.removeEventListener("abort", onAbort);
+          };
+          const finish = (result: AskUserResult) => {
+            if (completed) return;
+            completed = true;
+            cleanup();
+            done(result);
+          };
+          const onAbort = () => finish(buildResult(true));
+
           const refresh = () => {
+            if (completed) return;
             cachedWidth = undefined;
             cachedLines = undefined;
             tui.requestRender();
@@ -171,7 +208,7 @@ export default function askUserExtension(pi: ExtensionAPI) {
           const advance = () => {
             validationMessage = undefined;
             if (questionIndex === questions.length - 1) {
-              done(buildResult(false));
+              finish(buildResult(false));
               return;
             }
             questionIndex += 1;
@@ -242,6 +279,7 @@ export default function askUserExtension(pi: ExtensionAPI) {
           };
 
           editor.onSubmit = (value) => {
+            if (completed) return;
             const text = value.trim();
             if (!text) {
               validationMessage = "Free-text answers cannot be empty.";
@@ -268,6 +306,7 @@ export default function askUserExtension(pi: ExtensionAPI) {
           };
 
           const handleInput = (data: string) => {
+            if (completed) return;
             if (editing) {
               if (matchesKey(data, Key.escape)) {
                 editing = false;
@@ -304,7 +343,7 @@ export default function askUserExtension(pi: ExtensionAPI) {
               return;
             }
             if (matchesKey(data, Key.escape)) {
-              done(buildResult(true));
+              finish(buildResult(true));
             }
           };
 
@@ -421,8 +460,21 @@ export default function askUserExtension(pi: ExtensionAPI) {
             return lines;
           };
 
+          // All callbacks are initialized before registration: abort/done may reenter.
+          if (signal) {
+            signal.addEventListener("abort", onAbort, { once: true });
+            listening = true;
+            // An abort during registration may already have completed the UI.
+            if (completed) cleanup();
+            else if (signal.aborted) onAbort();
+          }
+
           return {
             render,
+            dispose() {
+              completed = true;
+              cleanup();
+            },
             invalidate() {
               cachedWidth = undefined;
               cachedLines = undefined;
@@ -453,6 +505,9 @@ export default function askUserExtension(pi: ExtensionAPI) {
     renderResult(result, _options, theme) {
       const details = result.details as AskUserResult | undefined;
       if (!details) return new Text("", 0, 0);
+      if (details.userRequest !== undefined) {
+        return new Text(formatAskUserResult(details), 0, 0);
+      }
       if (details.cancelled) {
         return new Text(theme.fg("warning", "Questionnaire cancelled"), 0, 0);
       }

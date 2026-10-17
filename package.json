@@ -11,7 +11,11 @@
   "scripts": {
     "check": "tsc --noEmit",
     "test": "node --test test/*.test.ts",
-    "probe:image": "node scripts/probe-openai-image-generation.mjs"
+    "probe:image": "node scripts/probe-openai-image-generation.mjs",
+    "talk:build": "node scripts/build-talk-native.mjs && npm run talk:facetime:build",
+    "talk:facetime:build": "node scripts/build-talk-facetime.mjs",
+    "talk:facetime:install": "node scripts/build-talk-facetime.mjs --install",
+    "talk:facetime": "extensions/talk/facetime/.build/release/facetime-observer watch"
   },
   "peerDependencies": {
     "@earendil-works/pi-ai": "*",
@@ -23,11 +27,13 @@
     "@earendil-works/pi-coding-agent": "0.87.1",
     "@earendil-works/pi-tui": "0.87.1",
     "@types/node": "^22.0.0",
+    "@types/ws": "^8.18.2",
     "typescript": "^5.7.0"
   },
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.30.1",
-    "firecrawl": "^4.42.0"
+    "firecrawl": "^4.42.0",
+    "ws": "^8.22.0"
   },
   "overrides": {
     "axios": "1.20.0"
