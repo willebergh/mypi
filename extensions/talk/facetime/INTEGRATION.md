@@ -4,24 +4,19 @@ FaceTime is an alternative audio/call mode for the **same Pi session**. History,
 
 ## One-time setup
 
-1. Build both local helpers from the repository root:
-
-   ```sh
-   npm run talk:build
-   ```
-
-   This builds the Rust WebRTC helper, then the Swift FaceTime helper and ad-hoc-signed app bundle. For later Swift-only changes, use `npm run talk:facetime:build`. Stop active calls and quit the helper before rebuilding. Existing native Talk builds already supporting protocol 6 need no Rust source change for audio gating; the updated Swift service is required for instance/sequence and allowlist metadata.
+1. Build the local Rust and Swift helpers directly, following [`/skill:setup`](../../../.pi/skills/setup/SKILL.md) and its [native Talk](../../../.pi/skills/setup/references/native-talk.md) and [FaceTime app](../../../.pi/skills/setup/references/facetime-app.md) references for prerequisites and exact build/signing steps. Stop active calls and quit the helper before rebuilding. Existing native Talk builds already supporting protocol 6 need no Rust source change for audio gating; the updated Swift service is required for instance/sequence and allowlist metadata.
 
 2. In Pi, `/reload` then `/talk devices virtual` creates/migrates the shared **`~/.pi/agent/talk.json`**. Configure its `facetime` section as described in [configuration](../CONFIG.md): exact caller/recipient allowlists, owner-only permissions, and Accessibility access. Swift reads its `facetime` policy; there is no persisted auto-answer switch. Pi prepares Talk before requesting Answer. Keep FaceTime open in the logged-in GUI session. Do not run as root.
 
 3. Install and open the independent app:
 
+   Follow the manual build/install steps in [APP.md](APP.md), then open the installed app through LaunchServices:
+
    ```sh
-   npm run talk:facetime:install
    open "$HOME/Applications/Pi FaceTime Bridge.app"
    ```
 
-   Use the app menu's explicit Accessibility controls and verify that macOS grants access to **Pi FaceTime Bridge**, not CMUX. Stop the old CLI service before opening the app; never run both. See [APP.md](APP.md) for local signing, rebuilds, and attribution testing. Pi still does not auto-launch the app or install a LaunchAgent. The optional developer CLI (`npm run talk:facetime`) remains available, but may require Accessibility on its terminal and must have its private diagnostic stdout drained.
+   Use the app menu's explicit Accessibility controls and verify that macOS grants access to **Pi FaceTime Bridge**, not CMUX. Stop the old CLI service before opening the app; never run both. See [APP.md](APP.md) for local signing, rebuilds, and attribution testing. Pi still does not auto-launch the app or install a LaunchAgent. The developer CLI (`swift run facetime-observer watch`) remains available, but may require Accessibility on its terminal and its diagnostic stdout should be drained.
 
 4. In Pi, verify/select the profiles (physical is optional):
 

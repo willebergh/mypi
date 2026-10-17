@@ -87,7 +87,7 @@ test("spawns only the local binary, pipes everything and passes an environment a
 test("missing binary never falls back, and unsupported platforms never spawn", async () => {
   const h = harness();
   h.child.emit("error", Object.assign(new Error("secret path"), { code: "ENOENT" }));
-  await assert.rejects(h.setup, /npm run talk:build/);
+  await assert.rejects(h.setup, /\/skill:setup/);
   assert.equal(h.calls.length, 1);
   assert.equal(h.errors.length, 1);
   assert.equal(h.closed, 1);

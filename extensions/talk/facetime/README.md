@@ -47,9 +47,9 @@ Tests use synthetic call observations and temporary config files; they do not pl
 
 ## Standalone app (recommended)
 
-From the repository root, `npm run talk:facetime:install` builds and locally ad-hoc-signs **Pi FaceTime Bridge.app**, then installs it under `~/Applications`. Open it through Finder/LaunchServices and use its menu to grant/check Accessibility. No developer account is needed; the app build never launches or requests permission by itself. Actual TCC attribution and grants need manual verification. See [APP.md](APP.md) for the full workflow; automatic startup from Pi remains deferred.
+Build, sign, and install **Pi FaceTime Bridge.app** using the direct commands in [`APP.md`](APP.md) and the whole-machine [`/skill:setup`](../../../.pi/skills/setup/SKILL.md) [FaceTime app reference](../../../.pi/skills/setup/references/facetime-app.md). Open it through Finder/LaunchServices and use its menu to grant/check Accessibility. No developer account is needed; building never launches the app or requests permission. Actual TCC attribution and grants need manual verification; automatic startup from Pi remains deferred.
 
-The direct CLI below remains a developer/debug option. Running it inside a terminal can attribute Accessibility to that terminal.
+The CLI remains supported as a developer/debug option (`swift run facetime-observer watch`). Running it inside a terminal can attribute Accessibility to that terminal.
 
 ## Accessibility permission
 

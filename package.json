@@ -6,16 +6,14 @@
   "pi": {
     "extensions": [
       "./extensions/*/index.ts"
+    ],
+    "skills": [
+      "./.pi/skills/setup"
     ]
   },
   "scripts": {
     "check": "tsc --noEmit",
-    "test": "node --test test/*.test.ts",
-    "probe:image": "node scripts/probe-openai-image-generation.mjs",
-    "talk:build": "node scripts/build-talk-native.mjs && npm run talk:facetime:build",
-    "talk:facetime:build": "node scripts/build-talk-facetime.mjs",
-    "talk:facetime:install": "node scripts/build-talk-facetime.mjs --install",
-    "talk:facetime": "extensions/talk/facetime/.build/release/facetime-observer watch"
+    "test": "node --test test/*.test.ts"
   },
   "peerDependencies": {
     "@earendil-works/pi-ai": "*",

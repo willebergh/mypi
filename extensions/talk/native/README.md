@@ -17,8 +17,8 @@ on the reference `pi-gpt-voice` package. No original prebuilt binary or upstream
   once without `--locked`; surviving dependency versions are unchanged.
 - `src/pulse/` is retained unchanged **as inactive reference source only**;
   its Apache-2.0 provenance remains in the unchanged upstream `VENDORED.md`.
-- Added a minimal Rust **1.99.0** toolchain pin and a local build script that
-  prefers installed static Opus, without installing dependencies automatically.
+- Added a minimal Rust **1.99.0** toolchain pin and a documented local build
+  workflow that prefers installed static Opus without installing dependencies automatically.
 
 Rust WebRTC, Sonora acoustic echo cancellation/noise/gain processing, Rubato,
 IPC **protocol 6**, and all other source behavior remain upstream's.
@@ -41,26 +41,30 @@ file bundled here.
 
 ## Build
 
-Requires macOS (arm64 or x64), Node.js, rustup with Rust 1.99.0 **already
+Requires macOS (arm64 or x64), rustup with Rust 1.99.0 **already
 installed**, Xcode command-line tools/macOS SDK, `pkg-config`, and installed
-Opus with a static library. Optional Homebrew setup (run manually):
+Opus with a static library. For complete new-machine setup, see
+[`/skill:setup`](../../../.pi/skills/setup/SKILL.md) and its
+[native Talk reference](../../../.pi/skills/setup/references/native-talk.md).
+Optional Homebrew setup (run manually):
 
 ```sh
 brew install opus pkg-config
 ```
 
-From the repository root:
+For the complete guarded build/publication procedure, follow the skill reference above. The underlying Cargo command, from the repository root, is:
 
 ```sh
-node scripts/build-talk-native.mjs
+cd extensions/talk/native
+OPUS_STATIC=1 cargo build --release --locked
 ```
 
-The script also works from another working directory using its absolute path.
-It runs `cargo build --release --locked` in this directory, with the rustup
-file selecting Rust without changing your global default. Missing prerequisites
-produce errors; it performs no rustup/Homebrew installs. Installed Opus is found
-through pkg-config, with Homebrew prefix discovery when necessary; no CMake
-source-build fallback is intended. Cargo may download locked registry crates.
+The checked-in rust-toolchain pin selects Rust without changing your global
+default. Install prerequisites separately; no setup is performed by this
+build. Installed Opus is found through pkg-config; no CMake source-build
+fallback is intended. Cargo may download locked registry crates. The compiled
+binary is at `target/release/pi-codex-voice`; copy it to
+`bin/darwin-<Node process.arch>/pi-codex-voice` for the extension to use (`arm64` or `x64`, not `x86_64`).
 
 Output (built locally, mode 755):
 `bin/darwin-${process.arch}/pi-codex-voice`, copied from

@@ -190,7 +190,7 @@ test("discovery never spawns when aborted/unsupported, and redacts synchronous l
   await assert.rejects(listNativeDevices(new AbortController().signal, { platform: "linux", spawnProcess }), /macOS/);
   assert.equal(spawns, 0);
   await assert.rejects(listNativeDevices(new AbortController().signal, { platform: "darwin", spawnProcess }), (error: Error) => {
-    assert.match(error.message, /npm run talk:build/);
+    assert.match(error.message, /\/skill:setup/);
     assert.doesNotMatch(error.message, /secret/);
     return true;
   });

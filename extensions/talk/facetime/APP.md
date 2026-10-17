@@ -4,32 +4,21 @@ The Swift service can run as **Pi FaceTime Bridge.app**, hosted independently of
 
 ## Build and install
 
-From the repository root on your Mac:
+For whole-machine prerequisites and the direct Swift build, bundle, install, and signing commands, follow [`/skill:setup`](../../../.pi/skills/setup/SKILL.md) and its [FaceTime app reference](../../../.pi/skills/setup/references/facetime-app.md). To build the service executable directly from this package:
 
 ```sh
-npm run talk:facetime:build    # Swift CLI + locally ad-hoc-signed app bundle
-npm run talk:facetime:install  # Build and install in ~/Applications
+swift build -c release
 ```
 
-`npm run talk:build` also includes the Swift app build, after the Rust WebRTC helper.
-
-Requirements: Swift 6/Xcode command-line tools and the macOS SDK. No paid Apple Developer account, shared certificate, notarization, or administrative install is needed for this personal local build. The script installs no tools, opens no app, and requests/changes no privacy permissions.
+Requirements: Swift 6/Xcode command-line tools and the macOS SDK. No paid Apple Developer account, shared certificate, notarization, or administrative install is needed for this personal local build. Building does not open the app or request/change privacy permissions.
 
 Locations:
 
-- Staged bundle: `extensions/talk/facetime/.build/Pi FaceTime Bridge.app`
+- Staged bundle: a temporary directory under `~/Applications`, verified before installation
 - Installed bundle: `~/Applications/Pi FaceTime Bridge.app`
 - Stable bundle ID: `dev.mypi.facetime-bridge`
 
-Stop active calls and quit the old bridge app/CLI before rebuilding. The builder checks mapped executables with `lsof` and refuses replacement rather than stopping processes. It signs and verifies a temporary bundle before replacing an existing known bundle, preserving the old app on signing failure.
-
-For development verification while an old CLI binary must remain untouched, a separate Swift cache can be used explicitly:
-
-```sh
-node scripts/build-talk-facetime.mjs --install --scratch-path extensions/talk/facetime/.build/app-check
-```
-
-This does not restart the service or launch the installed app. Do not run two service instances.
+Stop active calls and quit the old bridge app/CLI before rebuilding. The setup workflow checks mapped executables with `lsof` and refuses replacement rather than stopping processes. It signs and verifies a temporary bundle before replacing an existing known bundle, preserving the old app on signing failure. Do not run two service instances.
 
 ## Grant Accessibility to the app, not CMUX
 
@@ -62,19 +51,14 @@ Without Accessibility permission the app remains visible with actionable menu st
 
 Default signing is local **ad-hoc signing** (`codesign --sign -`). Changed builds can require another manual Accessibility grant. Keep the installed path and bundle ID stable, but do not assume those alone preserve consent.
 
-If desired later, use a stable signing identity already in your local keychain:
+If desired later, use a stable signing identity already in your local keychain: set `IDENTITY` in the [setup reference](../../../.pi/skills/setup/references/facetime-app.md) to that identity instead of `-`.
 
-```sh
-npm run talk:facetime:install -- --identity "Your local code-signing identity"
-```
-
-No certificate or private key is distributed with the repository. The builder does not reset TCC, edit macOS privacy databases, remove Terminal/CMUX permissions, install a LaunchAgent, or bypass Gatekeeper. If macOS blocks a locally built app, review its normal Open Anyway flow manually rather than disabling platform protections.
+No certificate or private key is distributed with the repository. The setup workflow does not reset TCC, edit macOS privacy databases, remove Terminal/CMUX permissions, install a LaunchAgent, or bypass Gatekeeper. If macOS blocks a locally built app, review its normal Open Anyway flow manually rather than disabling platform protections.
 
 ## Verification
 
 ```sh
-node --test test/talk-facetime-app-build.test.ts
 swift test --package-path extensions/talk/facetime
 ```
 
-These tests use synthetic executables/socket state and do not launch the menu-bar app, prompt for Accessibility, or place calls. App launch, permission attribution, routing, and a real call are separate manual checks.
+These tests use synthetic service/call/socket state and do not launch the menu-bar app, prompt for Accessibility, or place calls. App launch, permission attribution, routing, and a real call are separate manual checks.

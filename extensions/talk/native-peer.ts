@@ -71,7 +71,7 @@ async function runNativeHelper(
   try {
     child = (options.spawnProcess ?? spawn)(binary, [], { stdio: ["pipe", "pipe", "pipe"], env }) as ChildProcessWithoutNullStreams;
   } catch {
-    const error = new Error("Could not launch native audio helper. Run npm run talk:build in the mypi package first");
+    const error = new Error("Could not launch native audio helper. Use /skill:setup to build native Talk in the mypi package first");
     safe(() => callbacks.onError(error));
     safe(() => callbacks.onClosed());
     throw error;
@@ -273,7 +273,7 @@ async function runNativeHelper(
   child.stderr.on("data", () => {});
   child.stderr.on("error", () => fail("Native audio diagnostics stream failed"));
   child.stdin.on("error", () => fail("Native audio input failed"));
-  child.on("error", () => fail("Could not launch or run native audio helper. Run npm run talk:build in the mypi package first"));
+  child.on("error", () => fail("Could not launch or run native audio helper. Use /skill:setup to build native Talk in the mypi package first"));
   child.once("close", () => {
     reaped = true;
     clearTimeout(shutdownTimer);
