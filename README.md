@@ -38,7 +38,7 @@ The request uses Codex's `gpt-image-2` identifier, but the service controls the 
 
 ### Dictation
 
-**Hold Space continuously for one second** to start dictation. Text appears live in the prompt; release Space to stop and finalize it. Quick taps type a normal space; holding does not insert repeated spaces. Wait for the **Listening** indicator before speaking (connecting can take longer than the one-second hold). Releasing while still connecting cancels startup. Nothing is submitted automatically, and existing prompt text is preserved.
+**Hold Space continuously for one second** to start dictation. Text appears live in the prompt; release Space to stop and finalize it. Space is inserted immediately on key-down through Pi's normal editor, without waiting for release. Holding also leaves that one normal space in the draft, but suppresses repeats. Wait for the **Listening** indicator before speaking (connecting can take longer than the one-second hold). Releasing while still connecting cancels startup. Nothing is submitted automatically, and existing prompt text is preserved.
 
 Uses **`gpt-live-transcribe`**, with expected languages **`["en", "sv"]`** for English/Swedish code-switching and **`delay: "low"`**. No transcription prompt is sent: the earlier bilingual instruction prompt could be echoed as invented speech. Language hints are not a strict output filter.
 

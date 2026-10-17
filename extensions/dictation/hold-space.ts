@@ -8,11 +8,10 @@ export function isModifierOnlyEvent(data: string): boolean {
   return code >= 57441 && code <= 57454;
 }
 
-/** Buffers Space until a tap or a one-second hold can be distinguished. */
+/** Passes the first Space straight to the editor; a one-second hold starts dictation. */
 export function createSpaceHold(actions: {
   start(): void;
   stop(): void;
-  tap(): void;
 }) {
   let timer: ReturnType<typeof setTimeout> | undefined;
   let down = false;
@@ -30,11 +29,8 @@ export function createSpaceHold(actions: {
       if (isModifierOnlyEvent(data)) return { consume: true };
       const release = isKeyRelease(data);
       if (!matchesKey(data, "space")) {
-        // Don't delay a typed space past the following character.
-        if (down && !triggered && !release) {
-          actions.tap();
-          reset();
-        }
+        // Further typing cancels the hold, not the already-inserted space.
+        if (down && !triggered && !release) reset();
         return undefined;
       }
       if (release) {
@@ -42,7 +38,6 @@ export function createSpaceHold(actions: {
         const held = triggered;
         reset();
         if (held) actions.stop();
-        else actions.tap();
       } else if (!down && !isKeyRepeat(data)) {
         down = true;
         timer = setTimeout(() => {
@@ -50,6 +45,8 @@ export function createSpaceHold(actions: {
           triggered = true;
           actions.start();
         }, 1_000);
+        // Native insertion also takes Pi's normal immediate-render path.
+        return undefined;
       }
       return { consume: true };
     },

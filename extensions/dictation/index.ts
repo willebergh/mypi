@@ -181,7 +181,6 @@ export function registerDictation(pi: ExtensionAPI, dependencies = { startRecord
         if (active && active === heldRecording) void toggle(ctx);
         heldRecording = undefined;
       },
-      tap: () => ctx.ui.pasteToEditor(" "),
     });
     enableSpaceEvents();
     removeInput = ctx.ui.onTerminalInput((data) => {

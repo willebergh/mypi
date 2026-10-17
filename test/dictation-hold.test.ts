@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
+import { Editor, type TUI } from "@earendil-works/pi-tui";
 import { createSpaceHold, isModifierOnlyEvent } from "../extensions/dictation/hold-space.ts";
 
 const press = "\x1b[32;1:1u";
@@ -11,7 +12,6 @@ function setup() {
   const hold = createSpaceHold({
     start: () => calls.push("start"),
     stop: () => calls.push("stop"),
-    tap: () => calls.push("space"),
   });
   return { calls, hold };
 }
@@ -45,28 +45,28 @@ test("modifier-only reports do not interrupt a pending Space hold", (t) => {
   assert.deepEqual(calls, ["start", "stop"]);
 });
 
-test("quick Space taps insert one space without recording", (t) => {
+test("quick Space taps go straight to the native editor before any release or timer", (t) => {
   t.mock.timers.enable({ apis: ["setTimeout"] });
   const { hold, calls } = setup();
-  assert.deepEqual(hold.input(press), { consume: true });
+  assert.equal(hold.input(press), undefined, "do not consume the native insertion/render path");
   t.mock.timers.tick(999);
-  hold.input(repeat);
-  hold.input(release);
+  assert.deepEqual(hold.input(repeat), { consume: true });
+  assert.deepEqual(hold.input(release), { consume: true });
   t.mock.timers.tick(2000);
-  assert.deepEqual(calls, ["space"]);
+  assert.deepEqual(calls, []);
 });
 
-test("continuous hold starts at one second, ignores repeats, and stops on release", (t) => {
+test("continuous hold starts at one second, ignores repeats, and stops once on release", (t) => {
   t.mock.timers.enable({ apis: ["setTimeout"] });
   const { hold, calls } = setup();
-  hold.input(press);
+  assert.equal(hold.input(press), undefined);
   t.mock.timers.tick(500);
-  hold.input(repeat);
+  assert.deepEqual(hold.input(repeat), { consume: true });
   t.mock.timers.tick(499);
   assert.deepEqual(calls, []);
   t.mock.timers.tick(1);
   assert.deepEqual(calls, ["start"]);
-  hold.input(repeat);
+  assert.deepEqual(hold.input(repeat), { consume: true });
   t.mock.timers.tick(3000);
   hold.input(release);
   hold.input(release);
@@ -77,27 +77,27 @@ test("separate taps never accumulate hold time", (t) => {
   t.mock.timers.enable({ apis: ["setTimeout"] });
   const { hold, calls } = setup();
   for (let i = 0; i < 3; i++) {
-    hold.input(press);
+    assert.equal(hold.input(press), undefined);
     t.mock.timers.tick(600);
-    hold.input(release);
+    assert.deepEqual(hold.input(release), { consume: true });
   }
-  assert.deepEqual(calls, ["space", "space", "space"]);
+  assert.deepEqual(calls, []);
 });
 
-test("pending space is flushed before other typing, modified Space and paste pass through", (t) => {
+test("other typing cancels the hold; modified Space and paste pass through", (t) => {
   t.mock.timers.enable({ apis: ["setTimeout"] });
   const { hold, calls } = setup();
-  hold.input(" ");
+  assert.equal(hold.input(" "), undefined);
   assert.equal(hold.input("b"), undefined);
-  hold.input(repeat);
-  hold.input(release);
+  assert.deepEqual(hold.input(repeat), { consume: true });
+  assert.deepEqual(hold.input(release), { consume: true });
   t.mock.timers.tick(2000);
-  assert.deepEqual(calls, ["space"]);
+  assert.deepEqual(calls, []);
   assert.equal(hold.input("\x1b[32;2:1u"), undefined);
   assert.equal(hold.input("hello world"), undefined);
 });
 
-test("cancel removes pending holds and resets after recording", (t) => {
+test("cancel removes the hold timer and resets after recording", (t) => {
   t.mock.timers.enable({ apis: ["setTimeout"] });
   const { hold, calls } = setup();
   hold.input(press);
@@ -110,5 +110,34 @@ test("cancel removes pending holds and resets after recording", (t) => {
   hold.input(release);
   hold.input(press);
   hold.input(release);
-  assert.deepEqual(calls, ["start", "stop", "space"]);
+  assert.deepEqual(calls, ["start", "stop"]);
+});
+
+test("native editor inserts Space immediately at the cursor without duplicate or rollback", (t) => {
+  t.mock.timers.enable({ apis: ["setTimeout"] });
+  const { hold, calls } = setup();
+  const identity = (text: string) => text;
+  const editor = new Editor({ requestRender() {} } as TUI, {
+    borderColor: identity,
+    selectList: { selectedPrefix: identity, selectedText: identity, description: identity, scrollInfo: identity, noMatch: identity },
+  });
+  const input = (data: string) => {
+    if (!hold.input(data)?.consume) editor.handleInput(data);
+  };
+  editor.setText("beforeafter");
+  for (let i = 0; i < 5; i++) input("\x1b[D");
+  assert.deepEqual(editor.getCursor(), { line: 0, col: 6 });
+  input(press);
+  assert.equal(editor.getText(), "before after", "visible text changes on key-down, without a timer tick");
+  assert.deepEqual(editor.getCursor(), { line: 0, col: 7 });
+  input(repeat);
+  input(press); // Duplicate press reports must not insert another space.
+  t.mock.timers.tick(1000);
+  assert.deepEqual(calls, ["start"]);
+  assert.equal(editor.getText(), "before after", "starting dictation keeps the one ordinary space");
+  assert.deepEqual(editor.getCursor(), { line: 0, col: 7 });
+  input(release);
+  input(release);
+  assert.equal(editor.getText(), "before after");
+  assert.deepEqual(calls, ["start", "stop"]);
 });
