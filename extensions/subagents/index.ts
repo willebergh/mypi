@@ -41,6 +41,9 @@ const MAX_CANCEL_IDS = 64;
 const PER_RESULT_BYTES = 20 * 1_024;
 const TASK_CONTEXT_BYTES = 4 * 1_024;
 
+export const SUBAGENT_WAITING_GUIDANCE =
+  "Results arrive automatically and wake an idle parent; no waiting tool call is needed. Continue independent work if available. If only subagent results remain, end this turn now with a brief progress note (for example, 'Waiting for the delegated review; I’ll continue when it arrives.'). Ending this turn yields control; it does not declare the user's task complete. Do not claim completion or provide the substantive final answer until required results arrive. Never use bash sleep, delay loops, repeated list_subagents calls, or other keep-alive tool calls merely to wait for subagents. Use list_subagents only for a genuine status check or cancellation decision.";
+
 const ThinkingLevel = StringEnum(
   ["off", "minimal", "low", "medium", "high", "xhigh", "max"] as const,
 );
@@ -465,10 +468,11 @@ export default function subagentsExtension(pi: ExtensionAPI) {
     name: TOOL_NAME,
     label: "Subagents",
     description:
-      "Start one or more independent generic coding agents in the background with isolated context windows. Returns session-local agent IDs immediately. Each terminal result is automatically delivered back into the main agent context. Agents share the working tree, so do not run overlapping file mutations in parallel.",
+      "Start one or more independent generic coding agents in the background with isolated context windows. Returns session-local agent IDs immediately. Each terminal result is automatically delivered back into the main agent context and wakes an idle parent; do not sleep or poll to wait. Agents share the working tree, so do not run overlapping file mutations in parallel.",
     promptSnippet: "Start independent background coding agents",
     promptGuidelines: [
-      "Use subagent for independent parallel research or clearly separable implementation work; keep each delegated task self-contained and avoid parallel edits to the same files. The call returns immediately, and each result is delivered automatically when its agent settles. Do not poll list_subagents merely to wait: continue independent work when possible, or end the turn and let the completion wake you. Do not give a final answer while required subagent results are still pending. Use list_subagents only when an actual status check or cancellation decision is needed.",
+      "Use subagent for independent parallel research or clearly separable implementation work; keep each delegated task self-contained and avoid parallel edits to the same files. The call returns immediately.",
+      SUBAGENT_WAITING_GUIDANCE,
       "Select each subagent's model deliberately from these available choices: openai-codex/gpt-6-luna for focused, straightforward, high-volume work where speed and cost matter most; openai-codex/gpt-6.1-sol for a strong balance of intelligence and cost, including most complex work; openai-codex/gpt-6-astra for the most demanding reasoning, coding, or judgment. Set model explicitly based on the task. Do not inherit the parent model merely by default; omit model only when using the parent model is an intentional choice.",
     ],
     parameters: SubagentParameters,
@@ -497,7 +501,7 @@ export default function subagentsExtension(pi: ExtensionAPI) {
         "",
         ...started.map((state) => `- #${state.id} ${state.label} — ${state.status}`),
         "",
-        "Each result will be delivered automatically when the agent settles.",
+        SUBAGENT_WAITING_GUIDANCE,
       ].join("\n");
       return {
         content: [{ type: "text", text }],

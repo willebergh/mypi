@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import type { JsonAgentSessionEvent } from "@earendil-works/pi-coding-agent";
+import type { ExtensionAPI, JsonAgentSessionEvent } from "@earendil-works/pi-coding-agent";
 import {
   allSubagentsSettled,
   applySubagentEvent,
@@ -11,11 +11,12 @@ import {
   parseSubagentTelemetry,
   subagentCounterWidths,
 } from "../extensions/subagents/core.ts";
-import {
+import subagentsExtension, {
   CancelSubagentsParameters,
   formatSubagentCompletion,
   ListSubagentsParameters,
   SubagentParameters,
+  SUBAGENT_WAITING_GUIDANCE,
   subagentTaskBlock,
 } from "../extensions/subagents/index.ts";
 import {
@@ -36,6 +37,23 @@ test("keeps background subagent tools focused", () => {
     (CancelSubagentsParameters.properties.agentIds as { minItems?: number }).minItems,
     1,
   );
+});
+
+test("tells the parent to yield rather than sleep without claiming task completion", () => {
+  const tools: Parameters<ExtensionAPI["registerTool"]>[0][] = [];
+  subagentsExtension({
+    on() {},
+    events: { on() {} },
+    registerMessageRenderer() {},
+    registerTool(tool: Parameters<ExtensionAPI["registerTool"]>[0]) { tools.push(tool); },
+  } as unknown as ExtensionAPI);
+
+  const tool = tools.find((tool) => tool.name === "subagent")!;
+  assert.ok(tool.promptGuidelines?.includes(SUBAGENT_WAITING_GUIDANCE));
+  assert.match(tool.description, /wakes an idle parent/);
+  assert.match(SUBAGENT_WAITING_GUIDANCE, /end this turn now with a brief progress note/);
+  assert.match(SUBAGENT_WAITING_GUIDANCE, /does not declare the user's task complete/);
+  assert.match(SUBAGENT_WAITING_GUIDANCE, /Never use bash sleep, delay loops, repeated list_subagents calls/);
 });
 
 test("detects when every dashboard agent has settled", () => {
