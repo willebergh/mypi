@@ -7,6 +7,11 @@ private func followLayout(_ ratio: Double, peer: String = "Test Peer", id: Strin
     return VideoLayout(pid: 42, windowID: id, peer: peer, window: window, localPreview: local, remoteView: window, rotationAvailable: true)
 }
 
+private func followCalibration() -> VideoFollowCalibration {
+    VideoFollowCalibration(macLandscape: VideoFollowProfile(portrait: 1.5, landscape: 2.17),
+                           macPortrait: VideoFollowProfile(portrait: 0.56, landscape: 0.46))
+}
+
 private final class FollowHarness {
     var time: TimeInterval = 0
     var isAllowed = true
@@ -14,7 +19,7 @@ private final class FollowHarness {
     var callbacks: [(Result<[String: Any], VideoLayoutError>) -> Void] = []
     var events: [[String: Any]] = []
     var saved: [VideoFollowSettings] = []
-    var initial = VideoFollowSettings(enabled: true, calibrations: ["test peer": VideoFollowCalibration(portrait: 1.5, landscape: 2.17, portraitLocalAxis: "landscape", landscapeLocalAxis: "landscape")])
+    var initial = VideoFollowSettings(enabled: true, calibrations: ["test peer": followCalibration()])
     lazy var follow = VideoFollowController(settings: initial, save: { self.saved.append($0) }, allowed: { _ in self.isAllowed },
         rotate: { action, complete in self.actions.append(action); self.callbacks.append(complete) },
         emit: { self.events.append($0) }, now: { self.time })
@@ -27,15 +32,86 @@ private final class FollowHarness {
 }
 
 final class VideoFollowTests: XCTestCase {
-    func testCalibrationUsesRelativeAxisAgreementNotAbsolutePhoneShape() throws {
-        let calibration = VideoFollowCalibration(portrait: 1.5, landscape: 2.17, portraitLocalAxis: "landscape", landscapeLocalAxis: "landscape")
+    func testFourStateLookupUsesOnlyMeasuredMacAxisProfile() throws {
+        let calibration = followCalibration()
         XCTAssertTrue(calibration.complete)
         XCTAssertEqual(calibration.target(for: 1.5), "portrait")
-        XCTAssertEqual(calibration.target(for: 1 / 1.5), "landscape")
         XCTAssertEqual(calibration.target(for: 2.17), "landscape")
-        XCTAssertEqual(calibration.target(for: 1 / 2.17), "portrait")
+        XCTAssertEqual(calibration.target(for: 0.56), "portrait")
+        XCTAssertEqual(calibration.target(for: 0.46), "landscape")
+        // A horizontal sample's reciprocal is NOT a vertical phone sample.
+        XCTAssertNil(calibration.target(for: 1 / 1.5))
+        XCTAssertEqual(calibration.target(for: 1 / 2.17), "landscape", "Vertical profile, not inverted horizontal meaning")
         for unknown in [1.0, 1.8, 3.0, 0, -1, Double.nan, Double.infinity] { XCTAssertNil(calibration.target(for: unknown)) }
-        XCTAssertFalse(VideoFollowCalibration(portrait: 1.5, landscape: 1.6).complete)
+        XCTAssertFalse(VideoFollowProfile(portrait: 1.5, landscape: 1.6).complete)
+    }
+    func testPartialProfilesCannotInferTheOtherMacAxisOrAuthorizeAutomaticRotation() throws {
+        var calibration = VideoFollowCalibration(macLandscape: VideoFollowProfile(portrait: 1.5, landscape: 2.17))
+        XCTAssertFalse(calibration.complete)
+        XCTAssertNil(calibration.target(for: 1.5))
+        XCTAssertNil(calibration.target(for: 0.46))
+        calibration.record(orientation: "portrait", ratio: 0.56, localAxis: "portrait")
+        XCTAssertFalse(calibration.complete)
+        XCTAssertEqual(calibration.macLandscape.portrait, 1.5)
+        XCTAssertNil(calibration.macPortrait.landscape)
+        calibration.record(orientation: "landscape", ratio: 0.46, localAxis: "portrait")
+        XCTAssertTrue(calibration.complete)
+        XCTAssertEqual(calibration.target(for: 0.46), "landscape")
+    }
+    func testRepeatedPhoneTransitionsWorkWhenMacStartsVerticalAndHorizontal() throws {
+        let h = FollowHarness()
+        h.stable(0.56) // Vertical Mac, portrait phone: no click.
+        XCTAssertTrue(h.actions.isEmpty)
+        for cycle in 0..<3 {
+            h.stable(0.46) // Vertical Mac, landscape phone.
+            XCTAssertEqual(h.actions.count, cycle * 2 + 1)
+            XCTAssertEqual(h.actions.last?.target, "landscape")
+            h.finish(16 / 9.0)
+            h.time += 6; h.follow.observe(followLayout(16 / 9.0))
+            XCTAssertEqual(h.actions.count, cycle * 2 + 1)
+            h.stable(1.5) // Horizontal Mac, portrait phone.
+            XCTAssertEqual(h.actions.count, cycle * 2 + 2)
+            XCTAssertEqual(h.actions.last?.target, "portrait")
+            h.finish(9 / 16.0)
+            h.time += 6; h.follow.observe(followLayout(9 / 16.0))
+            XCTAssertEqual(h.actions.count, cycle * 2 + 2)
+        }
+    }
+    func testLegacyCalibrationMigratesOnlyIntoItsRecordedAxisAndDisablesFollowing() throws {
+        for axis in ["landscape", "portrait"] {
+            let data = try JSONSerialization.data(withJSONObject: [
+                "version": 1, "enabled": true,
+                "calibrations": ["test peer": ["portrait": 1.5, "landscape": 2.17,
+                                              "portraitLocalAxis": axis, "landscapeLocalAxis": axis]]
+            ])
+            let settings = try JSONDecoder().decode(VideoFollowSettings.self, from: data)
+            try settings.validate()
+            XCTAssertEqual(settings.version, 2)
+            XCTAssertFalse(settings.enabled)
+            let calibration = try XCTUnwrap(settings.calibrations["test peer"])
+            XCTAssertFalse(calibration.complete)
+            if axis == "landscape" {
+                XCTAssertEqual(calibration.macLandscape.portrait, 1.5)
+                XCTAssertTrue(calibration.macLandscape.complete)
+                XCTAssertNil(calibration.macPortrait.portrait)
+            } else {
+                XCTAssertEqual(calibration.macPortrait.portrait!, 1 / 1.5, accuracy: 0.0001)
+                XCTAssertTrue(calibration.macPortrait.complete)
+                XCTAssertNil(calibration.macLandscape.portrait)
+            }
+            let canonical = try JSONDecoder().decode(VideoFollowSettings.self, from: JSONEncoder().encode(settings))
+            XCTAssertFalse(canonical.enabled)
+            XCTAssertFalse(canonical.calibrations["test peer"]!.complete)
+        }
+    }
+    func testProfilesRejectWrongAxisRatiosAndAmbiguousPhoneSamples() throws {
+        let bad = VideoFollowCalibration(macLandscape: VideoFollowProfile(portrait: 0.56, landscape: 2.17),
+                                         macPortrait: VideoFollowProfile(portrait: 0.56, landscape: 0.46))
+        XCTAssertThrowsError(try VideoFollowSettings(enabled: true, calibrations: ["test peer": bad]).validate())
+        let ambiguous = VideoFollowCalibration(macLandscape: VideoFollowProfile(portrait: 1.5, landscape: 1.55),
+                                               macPortrait: VideoFollowProfile(portrait: 0.56, landscape: 0.46))
+        XCTAssertFalse(ambiguous.complete)
+        XCTAssertNil(ambiguous.target(for: 0.46))
     }
     func testDebouncePreventsRotatingOnSingleOrTransientSamples() throws {
         let h = FollowHarness()
@@ -53,17 +129,19 @@ final class VideoFollowTests: XCTestCase {
         for _ in 0..<12 { h.time += 1; h.follow.observe(followLayout(9 / 16.0)) }
         XCTAssertEqual(h.actions.count, 1)
         XCTAssertEqual(h.follow.phase, "matched")
-        h.stable(1 / 1.5)
+        h.stable(0.46)
         XCTAssertEqual(h.actions.count, 2)
         XCTAssertEqual(h.actions.last?.target, "landscape")
         h.finish(16 / 9.0)
         for _ in 0..<12 { h.time += 1; h.follow.observe(followLayout(16 / 9.0)) }
         XCTAssertEqual(h.actions.count, 2)
     }
-    func testLiveStyleCropResetIsVerifiedAndQuarantinedUntilFreshPhoneShape() throws {
+    func testLiveMeasuredProfilesAndCropResetsFollowBothDirectionsRepeatedly() throws {
         let h = FollowHarness()
-        h.initial = VideoFollowSettings(enabled: true, calibrations: ["test peer": VideoFollowCalibration(portrait: 2.175, landscape: 1.5, portraitLocalAxis: "portrait", landscapeLocalAxis: "portrait")])
-        h.stable(1 / 1.5)
+        h.initial = VideoFollowSettings(enabled: true, calibrations: ["test peer":
+            VideoFollowCalibration(macLandscape: VideoFollowProfile(portrait: 1.5, landscape: 150 / 69.0),
+                                   macPortrait: VideoFollowProfile(portrait: 80 / 174.0, landscape: 100 / 150.0))])
+        h.stable(100 / 150.0)
         XCTAssertEqual(h.actions.first?.target, "landscape")
         let action = try XCTUnwrap(h.actions.first)
         XCTAssertTrue(h.follow.permits(followLayout(16 / 9.0), action: action, afterAttempt: true), "Own crop reset must not invalidate post-click verification")
@@ -78,17 +156,20 @@ final class VideoFollowTests: XCTestCase {
         for _ in 0..<12 { h.time += 1; h.follow.observe(followLayout(9 / 16.0)) }
         XCTAssertEqual(h.actions.count, 2)
         XCTAssertEqual(h.follow.phase, "matched")
+        h.stable(100 / 150.0)
+        XCTAssertEqual(h.actions.count, 3)
+        XCTAssertEqual(h.actions.last?.target, "landscape")
     }
     func testOwnCropMatchingOtherPhoneCalibrationCannotReverseTheTarget() throws {
         let h = FollowHarness(); h.stable(1.5)
-        h.finish(1 / 1.5) // Correct portrait axis, but crop would otherwise imply mismatched axes.
-        for _ in 0..<12 { h.time += 1; h.follow.observe(followLayout(1 / 1.5)) }
+        h.finish(0.46) // Correct portrait axis, but crop matches the vertical phone-landscape sample.
+        for _ in 0..<12 { h.time += 1; h.follow.observe(followLayout(0.46)) }
         XCTAssertEqual(h.actions.count, 1)
         XCTAssertEqual(h.follow.phase, "matched")
     }
     func testAlreadyMatchingCameraNeverClicks() throws {
         let h = FollowHarness()
-        h.stable(1 / 2.17)
+        h.stable(0.56)
         h.stable(2.17)
         XCTAssertTrue(h.actions.isEmpty)
     }
@@ -173,11 +254,26 @@ final class VideoFollowTests: XCTestCase {
         XCTAssertEqual(first["complete"] as? Bool, false)
         _ = try h.follow.calibrate(orientation: "landscape", layout: followLayout(2.17), expectedWindowID: "42:SceneWindow", expectedPeer: "Test Peer")
         XCTAssertFalse(h.follow.settings.enabled)
+        XCTAssertThrowsError(try h.follow.setEnabled(true), "Horizontal-only calibration cannot enable following into an unmeasured axis")
+        _ = try h.follow.calibrate(orientation: "portrait", layout: followLayout(0.56), expectedWindowID: "42:SceneWindow", expectedPeer: "Test Peer")
+        _ = try h.follow.calibrate(orientation: "landscape", layout: followLayout(0.46), expectedWindowID: "42:SceneWindow", expectedPeer: "Test Peer")
         try h.follow.setEnabled(true)
         XCTAssertTrue(h.follow.settings.enabled)
         XCTAssertTrue(h.saved.last?.enabled == true)
         h.isAllowed = false
         XCTAssertThrowsError(try h.follow.calibrate(orientation: "portrait", layout: followLayout(1.5), expectedWindowID: "42:SceneWindow", expectedPeer: "Test Peer"))
+    }
+    func testCalibrationExpectedAxisGuardCannotOverwriteTheOtherProfile() throws {
+        let h = FollowHarness()
+        XCTAssertThrowsError(try h.follow.calibrate(orientation: "portrait", layout: followLayout(0.56),
+            expectedWindowID: "42:SceneWindow", expectedPeer: "Test Peer", expectedLocalAxis: "landscape"))
+        XCTAssertTrue(h.saved.isEmpty)
+        XCTAssertEqual(h.follow.settings.calibrations["test peer"]?.macLandscape.portrait, 1.5)
+        XCTAssertEqual(h.follow.settings.calibrations["test peer"]?.macPortrait.portrait, 0.56)
+        let result = try h.follow.calibrate(orientation: "landscape", layout: followLayout(0.46),
+            expectedWindowID: "42:SceneWindow", expectedPeer: "Test Peer", expectedLocalAxis: "portrait")
+        XCTAssertEqual(result["localAxis"] as? String, "portrait")
+        XCTAssertEqual(h.follow.settings.calibrations["test peer"]?.macLandscape.landscape, 2.17)
     }
     func testAppUsesStandardPreferencesWithoutOpeningItsOwnSuite() throws {
         let suiteName = "test.video-follow.\(UUID().uuidString)"
@@ -203,7 +299,7 @@ final class VideoFollowTests: XCTestCase {
         defer { defaults.removePersistentDomain(forName: suite) }
         let a = VideoFollowStore(configPath: "/tmp/a/talk.json", defaults: defaults)
         let b = VideoFollowStore(configPath: "/tmp/b/talk.json", defaults: defaults)
-        let settings = VideoFollowSettings(enabled: true, calibrations: ["test peer": VideoFollowCalibration(portrait: 1.5, landscape: 2.17, portraitLocalAxis: "landscape", landscapeLocalAxis: "landscape")])
+        let settings = VideoFollowSettings(enabled: true, calibrations: ["test peer": followCalibration()])
         try a.save(settings)
         XCTAssertTrue(try a.load().enabled)
         XCTAssertFalse(try b.load().enabled)

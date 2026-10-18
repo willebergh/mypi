@@ -391,7 +391,7 @@ final class WatchService: @unchecked Sendable {
             do {
                 guard let follow = videoFollow else { throw videoFollowError("Video follow controller is unavailable") }
                 let extra: Set<String> = name == "video.follow.set" ? ["enabled"] :
-                    name == "video.follow.calibrate" ? ["orientation", "expectedWindowId", "expectedPeer"] : []
+                    name == "video.follow.calibrate" ? ["orientation", "expectedWindowId", "expectedPeer", "expectedLocalAxis"] : []
                 guard Set(command.keys).isSubset(of: extra.union(["type", "command", "id"])) else {
                     throw videoFollowError("Unknown video follow command argument")
                 }
@@ -406,7 +406,11 @@ final class WatchService: @unchecked Sendable {
                           let windowID = command["expectedWindowId"] as? String,
                           let peer = command["expectedPeer"] as? String,
                           let layout = try videoLayout?.readCurrent() else { throw videoFollowError("Calibration requires current video.status target values") }
-                    value = try follow.calibrate(orientation: orientation, layout: layout, expectedWindowID: windowID, expectedPeer: peer)
+                    let axis = command["expectedLocalAxis"] as? String
+                    guard command["expectedLocalAxis"] == nil || axis.map({ ["portrait", "landscape"].contains($0) }) == true else {
+                        throw videoFollowError("expectedLocalAxis must be portrait or landscape")
+                    }
+                    value = try follow.calibrate(orientation: orientation, layout: layout, expectedWindowID: windowID, expectedPeer: peer, expectedLocalAxis: axis)
                 } else { value = follow.status }
                 reply(["type": "response", "id": id, "ok": true, "result": value])
             } catch {

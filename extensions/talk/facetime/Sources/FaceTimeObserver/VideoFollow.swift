@@ -204,7 +204,7 @@ final class VideoFollowController {
         epoch += 1; resetContext()
         phase = enabled ? "waiting_for_video" : "disabled"
     }
-    func calibrate(orientation: String, layout: VideoLayout, expectedWindowID: String, expectedPeer: String) throws -> [String: Any] {
+    func calibrate(orientation: String, layout: VideoLayout, expectedWindowID: String, expectedPeer: String, expectedLocalAxis: String? = nil) throws -> [String: Any] {
         guard !invalidated, loadError == nil, ["portrait", "landscape"].contains(orientation),
               layout.matches(windowID: expectedWindowID, peer: expectedPeer), allowed(layout.peer), !inFlight else {
             throw videoFollowError("Calibration requires a current allowlisted video view, portrait/landscape label, and no pending rotation")
@@ -217,6 +217,9 @@ final class VideoFollowController {
         let ratio = layout.localPreview.aspectRatio
         let localAxis = ratio > 1.08 ? "landscape" : ratio < 0.92 ? "portrait" : "unknown"
         guard localAxis != "unknown" else { throw videoFollowError("Cannot calibrate a square/ambiguous local camera axis") }
+        guard expectedLocalAxis == nil || expectedLocalAxis == localAxis else {
+            throw videoFollowError("Mac preview axis changed; refusing to write the wrong calibration profile")
+        }
         calibration.record(orientation: orientation, ratio: ratio, localAxis: localAxis)
         next.calibrations[peer] = calibration
         // Each calibration action pauses persisted automation. Enable only after
