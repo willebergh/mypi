@@ -7,6 +7,7 @@ import type { LiveCallbacks } from "../extensions/talk/live.ts";
 import { TALK_STATUS_CHANGED_EVENT } from "../extensions/resource-status/protocol.ts";
 import { normalizeQuestions } from "../extensions/ask-user/core.ts";
 import { requestVoiceQuestions } from "../extensions/ask-user/voice.ts";
+import { MANAGED_VIRTUAL_AUDIO } from "../extensions/talk/virtual-audio.ts";
 
 type Dependencies = NonNullable<Parameters<typeof registerTalk>[1]>;
 function setup(t: TestContext) {
@@ -15,6 +16,7 @@ function setup(t: TestContext) {
   const definitions = new Map<string, any>();
   const notices: string[] = [], gates: boolean[] = [];
   const quiet: string[] = [], spoken: string[] = [];
+  const sharingCalls: { action: string; display?: string }[] = [];
   const opened: any[][] = [], history: unknown[] = [], sent: unknown[] = [];
   const messages: any[][] = [], emitted: [string, any][] = [];
   const listeners = new Map<string, Function[]>();
@@ -32,7 +34,7 @@ function setup(t: TestContext) {
   const state = { enabled: false, phase: "disabled", connected: false };
   const profiles = {
     physical: { microphone: { id: "physical-mic", name: "Physical microphone" }, speaker: { id: "physical-out", name: "Headphones" } },
-    virtual: { microphone: { id: "virtual-in", name: "Agent Input" }, speaker: { id: "virtual-out", name: "Agent Output" } },
+    virtual: { ...MANAGED_VIRTUAL_AUDIO },
   };
   const ctx = {
     mode: "tui", hasUI: true, cwd: "/project", isIdle: () => true,
@@ -51,15 +53,18 @@ function setup(t: TestContext) {
     status: () => ({ ...state }),
     async enable() { state.enabled = true; state.connected = true; state.phase = "standby"; modeOptions.onStatus?.(this.status()); },
     async disable() { disabled++; state.enabled = false; abort.abort(); await voice?.stop(); state.phase = "disabled"; },
-    async call(to: string, purpose?: string) { return { to, purpose, submitted: true }; },
+    async call(purpose?: string) { return { to: modeOptions.recipient, purpose, submitted: true }; },
     async answer() { return {}; },
     async hangup() { await voice?.stop(); state.phase = "standby"; return {}; },
+    async shareScreen(display: string) { sharingCalls.push({ action: "share", display }); return { active: true, display, remoteControl: false, verified: true }; },
+    async stopSharing() { sharingCalls.push({ action: "stop" }); return { active: false, verified: true }; },
     async voiceEnded() { voiceEnded++; state.phase = "standby"; },
   };
   const dependencies: Dependencies = {
     audioMode: "native", summarizeContext: async () => undefined,
     loadAudioDevices: async () => profiles.physical,
     loadAudioProfiles: async () => profiles,
+    loadFaceTimeRecipient: async () => "synthetic@example.invalid",
     createFaceTimeMode(options) { modeCreates++; modeOptions = options; return mode; },
     createTrace: () => ({ reset: async () => {}, enable: async () => {}, disable: async () => {}, status: () => ({ enabled: false, path: "/unused", dropped: 0 }), session: () => ({ record() {}, addSecrets() {} }) }),
     async openLive(...args) {
@@ -73,7 +78,7 @@ function setup(t: TestContext) {
   const run = (args: string) => command(args, ctx);
   t.after(async () => { await run("stop"); await handlers.get("session_shutdown")?.({}, ctx); });
   return {
-    run, definitions, notices, opened, gates, history, sent, statuses, dependencies, profiles, mode, quiet, spoken,
+    run, definitions, notices, opened, gates, history, sent, statuses, dependencies, profiles, mode, quiet, spoken, sharingCalls,
     get modeOptions() { return modeOptions; }, get modeCreates() { return modeCreates; }, get disabled() { return disabled; },
     get voiceEnded() { return voiceEnded; }, get peerCloses() { return peerCloses; }, get callbacks() { return callbacks; },
     get activeTools() { return activeTools; }, events, emitted, messages,
@@ -100,19 +105,29 @@ test("regular Talk uses physical audio and cannot enable FaceTime tools or stand
   assert.match(h.notices.at(-1)!, /Stop the current Talk mode/);
 });
 
+test("direct virtual Talk opens the hidden managed route without FaceTime orchestration", async (t) => {
+  const h = setup(t);
+  await h.run("start virtual");
+  assert.equal(h.modeCreates, 0);
+  assert.deepEqual(h.opened[0][5], { virtual: MANAGED_VIRTUAL_AUDIO });
+  assert.equal(h.opened[0][6], true);
+  await h.run("status");
+  assert.match(h.notices.at(-1)!, /Talk capture\/playback: Pi Talk Internal/);
+});
+
 test("standby exposes tools without a voice call; virtual call stays gated until connected", async (t) => {
   const h = setup(t);
   await h.run("facetime");
   assert.equal(h.opened.length, 0);
-  assert.equal(h.definitions.size, 4);
-  assert.deepEqual(h.modeOptions.routing, { input: "Agent Output", output: "Agent Input" });
+  assert.equal(h.definitions.size, 6);
+  assert.deepEqual(h.modeOptions.routing, { input: "Pi Talk", output: "Pi Talk" });
   assert.deepEqual(h.dashboard, { state: "idle", mode: "facetime", detail: "standby" });
   assert.equal(h.statuses.get("talk-facetime"), undefined, "no separate FaceTime footer status");
   await h.run("start");
   assert.equal(h.opened.length, 0);
   assert.match(h.notices.at(-1)!, /FaceTime Talk mode is on/);
   const voice = await h.incoming();
-  assert.deepEqual(h.opened[0][5], { microphone: "virtual-in", speaker: "virtual-out" });
+  assert.deepEqual(h.opened[0][5], { virtual: MANAGED_VIRTUAL_AUDIO });
   assert.equal(h.opened[0][6], false);
   assert.equal(h.dashboard.state, "connecting");
   assert.match(h.dashboard.detail, /Waiting for FaceTime connection/);
@@ -157,9 +172,10 @@ test("an outgoing introduction uses quiet connection context then a speakable gr
 test("manual calls can supply a purpose, without treating missing purpose as known context", async (t) => {
   const h = setup(t);
   await h.run("facetime");
-  await h.run("facetime call synthetic@example.invalid --reason The requested tests passed.");
+  await h.run("facetime call --reason The requested tests passed.");
   const result = JSON.parse(h.notices.at(-1)!);
   assert.equal(result.to, "synthetic@example.invalid");
+  assert.equal(h.modeOptions.recipient, "synthetic@example.invalid");
   assert.equal(result.purpose, "The requested tests passed.");
   const voice = await h.incoming();
   voice.setAudioEnabled(true);
@@ -167,6 +183,34 @@ test("manual calls can supply a purpose, without treating missing purpose as kno
   assert.match(h.quiet.at(-1)!, /No specific topic was supplied/);
   assert.match(h.quiet.at(-1)!, /After their reply, ask what they would like to discuss/);
   assert.equal(h.spoken.at(-1), "Hello sir");
+});
+
+test("manual sharing commands forward exact display names and stop once, only in FaceTime mode", async (t) => {
+  const h = setup(t);
+  await h.run("facetime share Studio Display");
+  await h.run("facetime stop-sharing");
+  assert.deepEqual(h.sharingCalls, []);
+  assert.match(h.notices.at(-1)!, /Enable \/talk facetime first/);
+  await h.run("facetime");
+  assert.deepEqual(h.sharingCalls, [], "enabling must never automatically share");
+  await h.run("FaceTime SHARE Studio  DISPLAY");
+  assert.deepEqual(JSON.parse(h.notices.at(-1)!), { active: true, display: "Studio  DISPLAY", remoteControl: false, verified: true });
+  await h.run("facetime stop-sharing");
+  assert.deepEqual(JSON.parse(h.notices.at(-1)!), { active: false, verified: true });
+  assert.deepEqual(h.sharingCalls, [{ action: "share", display: "Studio  DISPLAY" }, { action: "stop" }]);
+  await h.run("facetime share");
+  assert.match(h.notices.at(-1)!, /Usage:.*share DISPLAY.*entire screen only/);
+  await h.run("facetime stop-sharing extra");
+  assert.match(h.notices.at(-1)!, /Usage:.*stop-sharing/);
+  assert.equal(h.sharingCalls.length, 2);
+  h.mode.shareScreen = async () => { h.sharingCalls.push({ action: "failed" }); throw new Error("sharing verification failed; no retry"); };
+  await h.run("facetime share Studio Display");
+  assert.match(h.notices.at(-1)!, /sharing verification failed/);
+  assert.equal(h.sharingCalls.length, 3);
+  await h.run("stop");
+  await h.run("facetime share Studio Display");
+  await h.run("facetime stop-sharing");
+  assert.equal(h.sharingCalls.length, 3);
 });
 
 test("stopping or switching Pi sessions disables mode and hides every FaceTime tool", async (t) => {
@@ -209,10 +253,10 @@ test("call end releases ask_user without terminal fallback and queues a lifecycl
 
 test("invalid virtual settings fail without exposing tools or opening audio", async (t) => {
   const h = setup(t);
-  h.dependencies.loadAudioProfiles = async () => ({ physical: {}, virtual: {} });
+  h.dependencies.loadAudioProfiles = async () => ({ physical: {}, virtual: {} as any });
   await h.run("facetime");
   assert.equal(h.modeCreates, 0);
   assert.equal(h.opened.length, 0);
   assert.equal(h.definitions.size, 0);
-  assert.match(h.notices.at(-1)!, /requires an explicit microphone and output/);
+  assert.match(h.notices.at(-1)!, /managed Pi Talk visibleUid and internalUid/);
 });

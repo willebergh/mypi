@@ -1,23 +1,23 @@
 # Shared Talk configuration
 
-Talk and the Swift FaceTime bridge use **one active configuration file**:
+Talk and the Swift FaceTime bridge use one active, owner-only configuration file:
 
 ```text
 ~/.pi/agent/talk.json
 ```
 
-Pi resolves it with `getAgentDir()` (including `PI_CODING_AGENT_DIR`). This is user/machine configuration, not project `.pi/settings.json`; a project cannot supply its own calling allowlist through this feature. AI credentials remain in Pi's normal authentication storage, never here.
+Pi resolves it with `getAgentDir()` (including `PI_CODING_AGENT_DIR`). This is user/machine configuration, not project `.pi/settings.json`. AI credentials remain in Pi's normal authentication storage.
 
-## Shape
+## Version 2 shape
 
 ```json
 {
-  "version": 1,
+  "version": 2,
   "audio": {
     "physical": {},
     "virtual": {
-      "microphone": { "id": "YOUR_COREAUDIO_INPUT_ID", "name": "Agent Input" },
-      "speaker": { "id": "YOUR_COREAUDIO_OUTPUT_ID", "name": "Agent Output" }
+      "visibleUid": "io.github.willebergh.pitalk.audio.visible",
+      "internalUid": "io.github.willebergh.pitalk.audio.internal"
     }
   },
   "facetime": {
@@ -30,42 +30,49 @@ Pi resolves it with `getAgentDir()` (including `PI_CODING_AGENT_DIR`). This is u
 }
 ```
 
-Use `/talk devices` to populate real device IDs/names rather than copying the placeholders. Its first picker selects Physical or Virtual, then microphone and output. Physical may use system defaults (`{}`); FaceTime requires both explicit virtual selections. Device IDs are opaque CoreAudio IDs, not friendly names.
+`audio.physical` retains optional `microphone` and `speaker` objects containing an opaque Core Audio ID and display name. Omitted physical directions use the macOS default.
 
-- **Pi/Talk capture:** `audio.virtual.microphone.id`.
-- **Pi/Talk playback:** `audio.virtual.speaker.id`.
-- **FaceTime microphone:** `audio.virtual.speaker.name`.
-- **FaceTime output:** `audio.virtual.microphone.name`.
+`audio.virtual` is managed and accepts only the two fixed UIDs above. Numeric `AudioDeviceID` values and friendly names are never persisted as virtual routing authority. Pi resolves the internal UID again whenever it creates or recreates a virtual stream. It does not enumerate the hidden endpoint or fall back to a physical/default device.
 
-Swift derives the inverse pair automatically. There are no separate FaceTime `inputDevice`/`outputDevice` settings and no persisted `autoAnswer` setting: Pi coordinates allowlisted answering after voice readiness, while Swift enforces the allowlists and performs the actions. Caller names remain UI identity matches, not cryptographic authentication.
+| Client | Input | Output |
+| --- | --- | --- |
+| FaceTime/call application | visible `Pi Talk` | visible `Pi Talk` |
+| Pi Talk native helper | hidden internal UID | hidden internal UID |
 
-Keep the file **owned by your user and mode `0600`**, at most 64 KiB. Timeouts must be 1–3600 seconds. Readers reject unsupported versions, malformed/unsafe policy, oversized files, and non-private or symlinked files rather than silently applying defaults. Editing/resetting audio must preserve FaceTime allowlists, aliases, and timeouts; `/talk devices reset` never erases call policy. A malformed shared config must be repaired or restored from a known backup, not reset to a permissive state.
+The Swift bridge normally selects the visible name `Pi Talk` in both FaceTime menu sections. If FaceTime omits its entire Microphone section because Pi Talk is the sole/default input, Swift accepts that input only when Core Audio independently reports the exact fixed visible UID as the current default; this is not a general system-default fallback. There are no separate FaceTime device fields and no persisted `autoAnswer` setting. For outgoing calls, `allowedRecipients` must contain exactly one owner address; Pi resolves it locally and the model supplies only a reason, never a recipient. `recipientAliases` authorize UI identity matching but are not alternate dial targets. Pi coordinates allowlisted answering after voice readiness; Swift enforces allowlists and performs the UI actions.
+
+Keep the file owned by your user and mode `0600`, at most 64 KiB. Timeouts must be 1–3600 seconds. Readers reject unsupported versions, malformed/unsafe policy, oversized files, and non-private or symlinked files rather than silently applying defaults. Audio reset preserves FaceTime allowlists, aliases, and timeouts. A malformed shared config must be repaired or restored from a known backup.
+
+## Commands and diagnostics
+
+- `/talk devices` and `/talk devices physical` select ordinary microphone/output devices directly; there is no profile-choice widget.
+- `/talk devices reset` and `/talk devices physical reset` restore physical system defaults.
+- `/talk devices diagnostics` resolves both hardcoded managed UIDs and reports current IDs, names, format/channels, and whether hidden capture/playback streams can be created simultaneously.
+- Virtual UIDs are fixed schema values: they are never selected, reset, or persisted from a device picker.
+
+Diagnostics do not contact OpenAI or start a WebRTC call. A successful preflight proves current Core Audio resolution and stream creation, not audible end-to-end routing or isolation; use the manual checks in the driver and FaceTime documentation for that.
 
 ## When settings apply
 
-- Regular Talk reads the physical profile on its next connection.
-- The Swift service reads the shared file when started and selects the inverse virtual pair when FaceTime is available.
-- Enabling `/talk facetime` asks the **idle** Swift service to reload that same file and apply routing, then verifies the selected device marks. It does not maintain or write a second routing configuration.
-- Changes do not rewire an active call. Stop/re-enable FaceTime mode to apply changes; restarting the entire Swift app is not required for ordinary shared-config edits. A known active call prevents `config.reload`.
-- The extension manages config writes. Swift reads it; socket commands do not edit the file or calling allowlists.
+- Regular `/talk` reads the physical profile on its next connection.
+- `/talk start virtual` opens only `Pi Talk Internal` with audio enabled immediately; it does not inspect or control the call application.
+- FaceTime mode reads the managed virtual profile, opens only `Pi Talk Internal`, and asks the idle Swift service to reload/apply visible `Pi Talk` routing.
+- Changes never rewire an active call. Stop/re-enable the mode after a config or driver change.
+- A device-loss/Core Audio restart ends the affected virtual session. Starting again resolves the UIDs afresh; there is no automatic default-device substitution.
+- The extension writes configuration. Swift reads it; socket commands do not edit allowlists or routing.
 
 ## Standalone GUI app and custom paths
 
-A LaunchServices app may not inherit the terminal's `PI_CODING_AGENT_DIR`. Its default is still `~/.pi/agent/talk.json`; when that environment variable is available, it uses the corresponding agent directory.
+A LaunchServices app may not inherit the terminal's `PI_CODING_AGENT_DIR`. Its default remains `~/.pi/agent/talk.json`. For a custom agent directory, use **Choose Talk config…** in the bridge app and Stop/Start so the app and Pi report the same path. The app remembers only that path in macOS preferences.
 
-For a custom Pi agent directory, use **Choose Talk config…** in the bridge app menu to select the exact file Pi uses. The app remembers **only its location** in macOS preferences—not another copy of the audio/call settings. Apply a different location with Stop/Start (or Retry), not during a call. Explicit CLI `--config PATH` remains available for development.
-
-The bridge reports its selected config path in status. Pi refuses FaceTime mode if that path differs, instead of silently using different allowlists or devices. No IPC command can silently repoint the bridge to a different policy file.
+The bridge reports its selected config path in status. Pi refuses FaceTime mode when paths differ. No IPC command silently repoints the bridge to another policy file.
 
 ## Migration
 
-The extension's first shared-config load migrates existing settings only when `talk.json` is absent:
+The extension migrates an existing canonical version-1 `talk.json` to version 2 after strictly validating it. It preserves physical selections and all FaceTime policy, replaces the old arbitrary virtual microphone/output pair with the fixed UIDs, and saves the exact original bytes in owner-only `talk.json.pre-v2.bak` without overwriting an existing backup.
 
-- `<agent-dir>/talk-devices.json` (old flat/v1 or physical/virtual v2 profiles).
-- `~/.config/pi-facetime/config.json` (old FaceTime policy).
+When no canonical file exists, migration can also import the old `<agent-dir>/talk-devices.json` and `~/.config/pi-facetime/config.json`. It preserves physical settings and policy, creates exact `.pre-talk-json.bak` copies, and publishes version 2 directly. It still refuses `autoAnswer: true`, invalid policy, unsafe files, or conflicting migration evidence.
 
-Valid selections, caller/recipient allowlists, aliases, and timeouts are preserved. Owner-only `.pre-talk-json.bak` copies are created without overwriting an existing backup. Original legacy files are left untouched for the still-running old service/rollback; **new versions ignore them once the canonical file exists**. The migration publishes the complete shared file atomically and does not restart the service, place calls, or change live routing.
+Original and backup files are not runtime fallbacks. If the canonical file disappears after migration, automatic legacy-policy re-import is refused so deleted calling permissions cannot silently return.
 
-Migration refuses an old `autoAnswer: true` configuration or conflicting legacy FaceTime/virtual routing instead of silently changing policy. If there were no virtual CoreAudio IDs, it does not invent IDs from device names; choose the virtual pair in Pi. Missing old files create safe defaults (empty allowlists). If `talk.json` disappears after migration but migration backups remain, automatic re-import is refused: restore a known shared config, or explicitly archive the legacy files to start fresh. Deleting the shared file must not resurrect old calling permissions.
-
-After upgrading, rebuild/install the Swift app with calls ended and the old app quit, then reload Pi. Old running binaries keep their loaded legacy settings until restarted; a new extension will reject a bridge that cannot report/reload the shared file.
+After upgrading, rebuild the native helper and Swift app with calls stopped, then reload Pi. Old protocol-6 helpers and version-1 Swift readers are intentionally incompatible with the new fail-closed routing contract.

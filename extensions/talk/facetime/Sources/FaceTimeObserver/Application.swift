@@ -1,7 +1,7 @@
 import AppKit
 import Foundation
 
-let bridgeApplicationName = "Pi FaceTime Bridge"
+let bridgeApplicationName = "Pi Talk"
 let bridgeBundleIdentifier = "dev.mypi.facetime-bridge"
 let bridgeExecutableName = "facetime-observer"
 
@@ -39,7 +39,7 @@ enum BridgeApplicationStatus: Equatable {
     var message: String? {
         switch self {
         case .permissionNeeded:
-            return "Enable Pi FaceTime Bridge in System Settings > Privacy & Security > Accessibility, then choose Start service. Permission is only requested when you choose Request Accessibility permission."
+            return "Enable Pi Talk in System Settings > Privacy & Security > Accessibility, then choose Start service. Permission is only requested when you choose Request Accessibility permission."
         case .startupError(let message): return message
         default: return nil
         }

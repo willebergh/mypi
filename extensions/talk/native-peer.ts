@@ -2,8 +2,15 @@ import { spawn, type ChildProcessWithoutNullStreams } from "node:child_process";
 import { StringDecoder } from "node:string_decoder";
 import { fileURLToPath } from "node:url";
 import type { PeerCallbacks, RtcPeer } from "./peer.ts";
-import { parseNativeAudioDevices, validateNativeAudioSelection, type NativeAudioDevices, type NativeAudioSelection } from "./native-devices.ts";
-export type { NativeAudioDevice, NativeAudioDevices, NativeAudioSelection } from "./native-devices.ts";
+import {
+  parseNativeAudioDevices, parseNativeVirtualAudioDiagnostics, validateNativeAudioSelection,
+  validateNativeVirtualAudioRoute, type NativeAudioDevices, type NativeAudioSelection,
+  type NativeVirtualAudioDiagnostics, type NativeVirtualAudioRoute,
+} from "./native-devices.ts";
+export type {
+  NativeAudioDevice, NativeAudioDevices, NativeAudioSelection, NativeVirtualAudioDiagnostics,
+  NativeVirtualAudioRoute,
+} from "./native-devices.ts";
 
 export interface NativePeerOptions extends NativeAudioSelection {
   /** Default true. False queues both audio gates before any answer can be applied. */
@@ -28,13 +35,24 @@ function safe(callback: () => void) {
   try { callback(); } catch { /* Consumer exceptions must not escape process handlers. */ }
 }
 
+const VIRTUAL_AUDIO_ERRORS: Record<string, string> = {
+  driver_not_installed: "Pi Talk audio driver is not installed. Build and run the macOS driver installer, then retry.",
+  visible_endpoint_unavailable: "The visible Pi Talk endpoint is unavailable. Reinstall or reload the Pi Talk audio driver, then retry.",
+  hidden_uid_unresolved: "Pi Talk Internal could not be resolved by UID. Reinstall or reload the Pi Talk audio driver; no default device was used.",
+  hidden_device_unknown: "Core Audio returned kAudioObjectUnknown for Pi Talk Internal. Restart Core Audio or reinstall the driver, then retry.",
+  input_stream_creation_failed: "Pi Talk Internal input stream could not be created. Close audio applications, restart Core Audio, and retry.",
+  output_stream_creation_failed: "Pi Talk Internal output stream could not be created. Close audio applications, restart Core Audio, and retry.",
+  unsupported_format: "Pi Talk Internal does not expose the required 48 kHz stereo format. Reinstall the matching driver build.",
+  device_lost: "Pi Talk Internal was lost after Core Audio changed or restarted. Start the call again to resolve its UID; no fallback was used.",
+};
+
 /** One helper per call. Only SDP/control data cross IPC, never the Codex OAuth token. */
 export async function createNativePeer(
   callbacks: PeerCallbacks,
   signal: AbortSignal,
   options: NativePeerOptions = {},
 ): Promise<RtcPeer> {
-  return runNativeHelper(callbacks, signal, options, false);
+  return runNativeHelper(callbacks, signal, options, "peer");
 }
 
 /** Enumerate without opening microphone streams or starting WebRTC; reap before settling. */
@@ -42,24 +60,41 @@ export async function listNativeDevices(
   signal: AbortSignal,
   options: NativeProcessOptions = {},
 ): Promise<NativeAudioDevices> {
-  return runNativeHelper({ onEvent() {}, onReady() {}, onError() {}, onClosed() {} }, signal, options, true);
+  return runNativeHelper({ onEvent() {}, onReady() {}, onError() {}, onClosed() {} }, signal, options, "devices");
 }
 
-function runNativeHelper(callbacks: PeerCallbacks, signal: AbortSignal, options: NativePeerOptions, discovery: false): Promise<RtcPeer>;
-function runNativeHelper(callbacks: PeerCallbacks, signal: AbortSignal, options: NativeProcessOptions, discovery: true): Promise<NativeAudioDevices>;
+/** Resolve both managed UIDs and prove that hidden capture/playback streams can coexist. */
+export async function diagnoseNativeVirtualAudio(
+  signal: AbortSignal,
+  route: NativeVirtualAudioRoute,
+  options: NativeProcessOptions = {},
+): Promise<NativeVirtualAudioDiagnostics> {
+  return runNativeHelper(
+    { onEvent() {}, onReady() {}, onError() {}, onClosed() {} },
+    signal,
+    { ...options, virtual: validateNativeVirtualAudioRoute(route) },
+    "diagnostics",
+  );
+}
+
+type NativeOperation = "peer" | "devices" | "diagnostics";
+function runNativeHelper(callbacks: PeerCallbacks, signal: AbortSignal, options: NativePeerOptions, operation: "peer"): Promise<RtcPeer>;
+function runNativeHelper(callbacks: PeerCallbacks, signal: AbortSignal, options: NativeProcessOptions, operation: "devices"): Promise<NativeAudioDevices>;
+function runNativeHelper(callbacks: PeerCallbacks, signal: AbortSignal, options: NativePeerOptions, operation: "diagnostics"): Promise<NativeVirtualAudioDiagnostics>;
 async function runNativeHelper(
   callbacks: PeerCallbacks,
   signal: AbortSignal,
   options: NativePeerOptions,
-  discovery: boolean,
-): Promise<RtcPeer | NativeAudioDevices> {
+  operation: NativeOperation,
+): Promise<RtcPeer | NativeAudioDevices | NativeVirtualAudioDiagnostics> {
   if (signal.aborted) throw new Error("Native audio aborted");
   if ((options.platform ?? process.platform) !== "darwin") {
     throw new Error("Native audio is only supported on macOS");
   }
-  const selection = discovery ? {} : validateNativeAudioSelection(options);
+  const selection = operation === "devices" ? {} : validateNativeAudioSelection(options);
+  if (operation === "diagnostics" && !selection.virtual) throw new Error("Virtual audio diagnostics require managed UIDs");
   const initialAudioEnabled = options.initialAudioEnabled === undefined ? true : options.initialAudioEnabled;
-  if (!discovery && typeof initialAudioEnabled !== "boolean") throw new Error("Invalid native initial audio gate");
+  if (operation === "peer" && typeof initialAudioEnabled !== "boolean") throw new Error("Invalid native initial audio gate");
   const binary = options.binary ?? fileURLToPath(new URL(
     `./native/bin/darwin-${process.arch}/pi-codex-voice`, import.meta.url,
   ));
@@ -87,6 +122,7 @@ async function runNativeHelper(
   let speakerEpoch = 0;
   let errorNotified = false;
   let devices: NativeAudioDevices | undefined;
+  let diagnostics: NativeVirtualAudioDiagnostics | undefined;
   let closing: Promise<void> | undefined;
   let shutdownTimer: ReturnType<typeof setTimeout> | undefined;
   let offerTimer: ReturnType<typeof setTimeout> | undefined;
@@ -185,28 +221,55 @@ async function runNativeHelper(
     const message = value as Record<string, unknown>;
     if (typeof message.type !== "string") throw new Error();
     if (message.type === "error") {
-      // Classify only; never echo helper text, which can contain SDP or secrets.
-      const permission = typeof message.message === "string" && /permission|denied|not authorized/i.test(message.message);
+      // Only fixed local codes cross this boundary; never echo helper text.
+      const code = typeof message.code === "string" ? message.code : "";
+      const permission = code === "permission_denied"
+        || (typeof message.message === "string" && /permission|denied|not authorized/i.test(message.message));
       fail(permission
         ? "Native audio microphone access denied. Enable microphone access for your terminal in System Settings > Privacy & Security > Microphone."
-        : "Native audio helper reported an audio error");
+        : VIRTUAL_AUDIO_ERRORS[code] ?? "Native audio helper reported an audio error");
       return;
     }
     if (!launched) {
-      if (message.type !== "ready" || message.version !== 6) throw new Error();
+      if (message.type !== "ready" || message.version !== 7) throw new Error();
       launched = true;
       clearTimeout(launchTimer);
-      write(discovery ? { type: "list_devices" } : { type: "start_v3", ...selection });
-      // Rust awaits start_v3 creation before reading the next stdin command.
-      // Queue gates now, not after the offer/answer round trip can connect audio.
-      if (!discovery) setAudioEnabled(initialAudioEnabled);
-      offerTimer = setTimeout(() => fail(discovery ? "Native audio device discovery timed out" : "Native audio offer timed out"), discovery ? 5_000 : 15_000);
-      if (!discovery) resolveLaunch();
+      if (operation === "devices") write({ type: "list_devices" });
+      else if (operation === "diagnostics") write({
+        type: "diagnose_virtual_audio",
+        visible_uid: selection.virtual!.visibleUid,
+        internal_uid: selection.virtual!.internalUid,
+      });
+      else if (selection.virtual) write({
+        type: "start_v3_virtual",
+        visible_uid: selection.virtual.visibleUid,
+        internal_uid: selection.virtual.internalUid,
+      });
+      else write({ type: "start_v3", ...(selection.microphone ? { microphone: selection.microphone } : {}), ...(selection.speaker ? { speaker: selection.speaker } : {}) });
+      // Rust awaits stream creation before reading the next stdin command. Queue
+      // gates now, before the offer/answer round trip can connect virtual audio.
+      if (operation === "peer") setAudioEnabled(initialAudioEnabled);
+      offerTimer = setTimeout(
+        () => fail(operation === "peer" ? "Native audio offer timed out"
+          : operation === "devices" ? "Native audio device discovery timed out"
+          : "Native virtual audio diagnostics timed out"),
+        operation === "peer" ? 15_000 : 5_000,
+      );
+      if (operation === "peer") resolveLaunch();
       return;
     }
-    if (discovery) {
+    if (operation === "devices") {
       if (message.type !== "devices") throw new Error();
       devices = parseNativeAudioDevices(message);
+      resolveLaunch();
+      void close();
+      return;
+    }
+    if (operation === "diagnostics") {
+      if (message.type !== "virtual_audio_diagnostics") throw new Error();
+      diagnostics = parseNativeVirtualAudioDiagnostics(message);
+      if (diagnostics.visible.uid !== selection.virtual!.visibleUid
+        || diagnostics.internal.uid !== selection.virtual!.internalUid) throw new Error();
       resolveLaunch();
       void close();
       return;
@@ -257,7 +320,7 @@ async function runNativeHelper(
       if (newline !== -1) {
         line += decoder.end();
         try { event(JSON.parse(line)); }
-        catch { fail("Invalid native audio helper protocol (requires version 6)"); }
+        catch { fail("Invalid native audio helper protocol (requires version 7); rebuild the helper with /skill:setup"); }
         line = "";
         lineBytes = 0;
         decoder = new StringDecoder("utf8");
@@ -286,9 +349,13 @@ async function runNativeHelper(
 
   try {
     await launch;
-    if (discovery && devices) {
+    if (operation === "devices" && devices) {
       await close();
       return devices;
+    }
+    if (operation === "diagnostics" && diagnostics) {
+      await close();
+      return diagnostics;
     }
     if (stopped) throw new Error("Native audio peer closed during startup");
     return {

@@ -11,8 +11,12 @@ use crossbeam_queue::ArrayQueue;
 use tokio::sync::mpsc;
 
 use crate::codex_audio::buffers::{BLOCK, CaptureBoundary, Frame, FramePacker};
+use crate::codex_audio::processing::ProcessingPolicy;
 use crate::playout::{PlayoutMark, PlayoutProbe};
-use crate::protocol::{AudioDevice, Event, MAX_DEVICE_BYTES, MAX_DEVICES, MAX_SAFE_INTEGER};
+use crate::protocol::{
+    AudioDevice, ErrorCode, Event, MAX_DEVICE_BYTES, MAX_DEVICES, MAX_SAFE_INTEGER,
+};
+use crate::virtual_audio;
 
 const CAPTURE_QUEUE_FRAMES: usize = 192;
 const RENDER_QUEUE_FRAMES: usize = 192;
@@ -36,6 +40,7 @@ pub struct Capture {
     pub generation: Arc<AtomicU64>,
     pub dropped: Arc<AtomicBool>,
     pub failed: Arc<AtomicBool>,
+    pub policy: ProcessingPolicy,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -239,10 +244,21 @@ impl OutputGate {
     }
 }
 
+enum PlaybackTarget {
+    Physical {
+        device: Device,
+        supported: SupportedStreamConfig,
+    },
+    // Store only the stable UID, never an AudioDeviceID across stream rebuilds.
+    Virtual {
+        uid: String,
+    },
+}
+
 pub struct Playback {
     stream: Option<Stream>,
-    device: Device,
-    supported: SupportedStreamConfig,
+    target: PlaybackTarget,
+    pub failed: Arc<AtomicBool>,
     events: mpsc::Sender<Event>,
     pub samples: Arc<PlaybackBuffer>,
     pub rendered: Arc<ArrayQueue<Frame>>,
@@ -258,6 +274,8 @@ struct OutputShared {
     render_dropped: Arc<AtomicBool>,
     state: Arc<SpeakerState>,
     events: mpsc::Sender<Event>,
+    failed: Arc<AtomicBool>,
+    virtual_route: bool,
 }
 
 /// Local adaptation: use only the system CoreAudio host on macOS.
@@ -363,6 +381,21 @@ fn capture_device(device: Device) -> Result<Capture> {
         .default_input_config()
         .context("microphone has no default input format")?;
     validate_config(&supported)?;
+    capture_config(device, supported, ProcessingPolicy::Physical)
+}
+
+pub fn capture_virtual(uid: &str) -> Result<Capture> {
+    let device = virtual_audio::hidden_device(uid)?;
+    let supported = virtual_audio::stream_config(&device, true)?;
+    capture_config(device, supported, ProcessingPolicy::Virtual)
+        .map_err(|error| virtual_audio::stream_error(error, true))
+}
+
+fn capture_config(
+    device: Device,
+    supported: SupportedStreamConfig,
+    policy: ProcessingPolicy,
+) -> Result<Capture> {
     let sample_rate = supported.sample_rate();
     let frames = Arc::new(ArrayQueue::new(CAPTURE_QUEUE_FRAMES));
     let generation = Arc::new(AtomicU64::new(0));
@@ -384,6 +417,7 @@ fn capture_device(device: Device) -> Result<Capture> {
         generation,
         dropped,
         failed,
+        policy,
     })
 }
 
@@ -406,10 +440,32 @@ fn playback_device(device: Device, events: mpsc::Sender<Event>) -> Result<Playba
         .context("speaker has no default output format")?;
     validate_config(&supported)?;
     let sample_rate = supported.sample_rate();
+    playback_target(
+        PlaybackTarget::Physical { device, supported },
+        sample_rate,
+        events,
+    )
+}
+
+pub fn playback_virtual(uid: &str, events: mpsc::Sender<Event>) -> Result<Playback> {
+    playback_target(
+        PlaybackTarget::Virtual {
+            uid: uid.to_owned(),
+        },
+        virtual_audio::SAMPLE_RATE,
+        events,
+    )
+}
+
+fn playback_target(
+    target: PlaybackTarget,
+    sample_rate: u32,
+    events: mpsc::Sender<Event>,
+) -> Result<Playback> {
     let mut playback = Playback {
         stream: None,
-        device,
-        supported,
+        target,
+        failed: Arc::new(AtomicBool::new(false)),
         events,
         samples: Arc::new(PlaybackBuffer::new(
             sample_rate as usize * PLAYBACK_QUEUE_MS / 1_000,
@@ -437,20 +493,39 @@ impl Playback {
     }
 
     fn restart(&mut self) -> Result<()> {
-        let stream = build_output_stream(
-            &self.device,
-            &self.supported,
-            OutputShared {
-                samples: Arc::clone(&self.samples),
-                rendered: Arc::clone(&self.rendered),
-                render_dropped: Arc::clone(&self.render_dropped),
-                state: Arc::clone(&self.state),
-                events: self.events.clone(),
-            },
-        )?;
-        stream.play().context("failed to start speaker")?;
-        self.stream = Some(stream);
-        Ok(())
+        let virtual_route = matches!(&self.target, PlaybackTarget::Virtual { .. });
+        let (device, supported) = match &self.target {
+            PlaybackTarget::Physical { device, supported } => (device.clone(), *supported),
+            PlaybackTarget::Virtual { uid } => {
+                let device = virtual_audio::hidden_device(uid)?;
+                let supported = virtual_audio::stream_config(&device, false)?;
+                (device, supported)
+            }
+        };
+        self.failed.store(false, Ordering::Release);
+        let result = (|| {
+            let stream = build_output_stream(
+                &device,
+                &supported,
+                OutputShared {
+                    samples: Arc::clone(&self.samples),
+                    rendered: Arc::clone(&self.rendered),
+                    render_dropped: Arc::clone(&self.render_dropped),
+                    state: Arc::clone(&self.state),
+                    events: self.events.clone(),
+                    failed: Arc::clone(&self.failed),
+                    virtual_route,
+                },
+            )?;
+            stream.play().context("failed to start speaker")?;
+            self.stream = Some(stream);
+            Ok(())
+        })();
+        if virtual_route {
+            result.map_err(|error| virtual_audio::stream_error(error, false))
+        } else {
+            result
+        }
     }
 }
 
@@ -595,6 +670,8 @@ where
         render_dropped,
         state,
         events,
+        failed,
+        virtual_route,
     } = shared;
     let sample_rate = config.sample_rate;
     let rate = f64::from(sample_rate);
@@ -660,10 +737,17 @@ where
         },
         move |error| {
             eprintln!("speaker stream error: {error}");
-            if error.kind() != ErrorKind::DeviceChanged && !error_reported {
+            let terminal = if virtual_route {
+                error.kind() != ErrorKind::Xrun
+            } else {
+                error.kind() != ErrorKind::DeviceChanged
+            };
+            if terminal && !error_reported {
+                failed.store(true, Ordering::Release);
                 error_reported = true;
                 let _ = events.try_send(Event::Error {
-                    message: format!("speaker stream error: {error}"),
+                    message: format!("speaker stream error: {error}; restart the call after checking the audio device"),
+                    code: virtual_route.then_some(ErrorCode::DeviceLost),
                 });
             }
         },

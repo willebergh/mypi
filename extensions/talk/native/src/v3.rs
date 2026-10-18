@@ -55,6 +55,23 @@ impl V3Session {
         Self::create(output, events, Some(capture), Some(playback)).await
     }
 
+    pub async fn create_virtual(
+        visible_uid: String,
+        internal_uid: String,
+        events: mpsc::Sender<Event>,
+    ) -> Result<(Self, String)> {
+        crate::virtual_audio::preflight(&visible_uid, &internal_uid)?;
+        // Each direction performs a fresh UID translation immediately before
+        // opening its stream; preflight IDs are deliberately not retained.
+        let capture = audio::capture_virtual(&internal_uid)?;
+        let playback = audio::playback_virtual(&internal_uid, events.clone())?;
+        let output = OutputSink::Device {
+            samples: Arc::clone(&playback.samples),
+            sample_rate: playback.sample_rate,
+        };
+        Self::create(output, events, Some(capture), Some(playback)).await
+    }
+
     pub async fn create_bridge(events: mpsc::Sender<Event>) -> Result<(Self, String)> {
         Self::create(OutputSink::Bridge, events, None, None).await
     }
@@ -103,6 +120,7 @@ impl V3Session {
                         let _ = message_events
                             .send(Event::Error {
                                 message: format!("invalid realtime data event: {error}"),
+                                code: None,
                             })
                             .await;
                     }
@@ -146,6 +164,7 @@ impl V3Session {
             spawn_device_encoder(
                 track,
                 DeviceEncoder {
+                    policy: capture.policy,
                     frames: Arc::clone(&capture.frames),
                     input_rate: capture.sample_rate,
                     generation: Arc::clone(&capture.generation),
@@ -273,12 +292,18 @@ impl DataSender {
                         let _ = events
                             .send(Event::Error {
                                 message: "realtime data channel send timed out".to_owned(),
+                                code: None,
                             })
                             .await;
                         return;
                     }
                 };
-                let _ = events.send(Event::Error { message }).await;
+                let _ = events
+                    .send(Event::Error {
+                        message,
+                        code: None,
+                    })
+                    .await;
             }
         });
         Self {
@@ -379,7 +404,7 @@ mod tests {
             .unwrap();
         assert!(started.elapsed() >= deadline);
         assert!(
-            matches!(event, Event::Error { ref message } if message == "realtime data channel send timed out")
+            matches!(event, Event::Error { ref message, .. } if message == "realtime data channel send timed out")
         );
         assert_eq!(*sent.lock().unwrap(), vec!["\"one\"", "\"two\""]);
         tokio::time::sleep(Duration::from_millis(10)).await;

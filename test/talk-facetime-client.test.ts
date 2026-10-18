@@ -94,6 +94,31 @@ test("FaceTime transport bounds pending IDs, rejects timeouts, ignores late resp
   assert.equal(h.commands.filter((c) => c.command === "call").length, 1);
 });
 
+test("sharing commands use their own timeout without retries or disconnect replays", async (t) => {
+  const h = await harness(t, { requestTimeoutMs: 30, sharingRequestTimeoutMs: 500 });
+  await h.client.connect();
+  h.respond = false;
+  const share = h.client.request("screen.share");
+  await until(() => h.commands.length === 1);
+  await new Promise((resolve) => setTimeout(resolve, 50));
+  assert.equal(h.errors.length, 0);
+  h.sockets[0].write(`${JSON.stringify({ type: "response", id: h.commands[0].id, ok: true, result: { shared: true } })}\n`);
+  assert.deepEqual(await share, { shared: true });
+  assert.equal(h.commands.length, 1);
+
+  const ordinary = h.client.request("status");
+  await assert.rejects(ordinary, /outcome unknown, not retried/);
+  assert.equal(h.commands.filter((c) => c.command === "status").length, 1);
+
+  const stop = h.client.request("screen.stop");
+  await until(() => h.commands.length === 3);
+  h.sockets[0].destroy();
+  await assert.rejects(stop, /disconnected/);
+  await until(() => h.snapshots.length === 2);
+  assert.equal(h.commands.filter((c) => c.command === "screen.stop").length, 1);
+  assert.equal(h.errors.length, 1);
+});
+
 test("FaceTime disconnect rejects in-flight mutations and reconnect never replays them", async (t) => {
   const h = await harness(t, {}, (socket, index) => socket.write(`${JSON.stringify(snapshot(index === 1 ? 5 : 7))}\n`));
   await h.client.connect();

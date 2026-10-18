@@ -4,18 +4,19 @@ import { link, lstat, mkdir, open, rename, rm } from "node:fs/promises";
 import { homedir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { getAgentDir } from "@earendil-works/pi-coding-agent";
+import { MANAGED_VIRTUAL_AUDIO, validateManagedVirtualAudio, type ManagedVirtualAudio } from "./virtual-audio.ts";
 
 export interface TalkDeviceSettings {
   microphone?: { id: string; name: string };
   speaker?: { id: string; name: string };
 }
-export type AudioProfile = "physical" | "virtual";
 export interface TalkAudioProfiles {
   physical: TalkDeviceSettings;
-  virtual: TalkDeviceSettings;
+  virtual: ManagedVirtualAudio;
 }
+type LegacyAudioProfiles = { physical: TalkDeviceSettings; virtual: TalkDeviceSettings };
 export interface TalkConfig {
-  version: 1;
+  version: 2;
   audio: TalkAudioProfiles;
   facetime: {
     allowedCallers: string[];
@@ -39,7 +40,7 @@ export function getTalkConfigPath(): string {
 
 function defaults(): TalkConfig {
   return {
-    version: 1, audio: { physical: {}, virtual: {} },
+    version: 2, audio: { physical: {}, virtual: { ...MANAGED_VIRTUAL_AUDIO } },
     facetime: { allowedCallers: [], allowedRecipients: [], recipientAliases: {}, callStartTimeoutSeconds: 15, ringingTimeoutSeconds: 60 },
   };
 }
@@ -74,6 +75,11 @@ export function validateTalkDeviceSettings(value: unknown): TalkDeviceSettings {
 
 function profiles(value: unknown): TalkAudioProfiles {
   const audio = object(value, "talk audio profiles", ["physical", "virtual"]);
+  return { physical: validateTalkDeviceSettings(audio.physical), virtual: validateManagedVirtualAudio(audio.virtual) };
+}
+
+function legacyProfiles(value: unknown): LegacyAudioProfiles {
+  const audio = object(value, "legacy talk audio profiles", ["physical", "virtual"]);
   return { physical: validateTalkDeviceSettings(audio.physical), virtual: validateTalkDeviceSettings(audio.virtual) };
 }
 
@@ -108,8 +114,8 @@ function policy(value: unknown): TalkConfig["facetime"] {
 
 function validate(value: unknown): TalkConfig {
   const config = object(value, "Talk config", ["version", "audio", "facetime"]);
-  if (config.version !== 1) throw new Error(`Unsupported Talk config version: ${String(config.version)}`);
-  return { version: 1, audio: profiles(config.audio), facetime: policy(config.facetime) };
+  if (config.version !== 2) throw new Error(`Unsupported Talk config version: ${String(config.version)}`);
+  return { version: 2, audio: profiles(config.audio), facetime: policy(config.facetime) };
 }
 
 function parse(bytes: Buffer, path: string): unknown {
@@ -120,7 +126,7 @@ function parse(bytes: Buffer, path: string): unknown {
 }
 
 /** Inspect before opening (including dangling symlinks), then validate the opened inode. */
-async function readPrivate(path: string): Promise<Buffer | undefined> {
+async function readPrivateOnce(path: string): Promise<Buffer | undefined> {
   try {
     const before = await lstat(path);
     if (!before.isFile()) throw new Error(`Config must be a regular file, not a symlink: ${path}`);
@@ -145,6 +151,18 @@ async function readPrivate(path: string): Promise<Buffer | undefined> {
   } catch (error) {
     if ((error as NodeJS.ErrnoException).code === "ENOENT") return undefined;
     throw error;
+  }
+}
+
+async function readPrivate(path: string): Promise<Buffer | undefined> {
+  for (let attempt = 0; ; attempt++) {
+    try { return await readPrivateOnce(path); }
+    catch (error) {
+      // Atomic writers replace the path between lstat and open. Retry the full
+      // no-follow/inode validation; never continue using either raced handle.
+      if (attempt < 3 && error instanceof Error && error.message.startsWith("Config changed while opening:")) continue;
+      throw error;
+    }
   }
 }
 
@@ -174,11 +192,11 @@ async function publish(path: string, bytes: Buffer, replace = false): Promise<bo
   } finally { await rm(temporary, { force: true }); }
 }
 
-function legacyAudio(value: unknown): TalkAudioProfiles {
+function legacyAudio(value: unknown): LegacyAudioProfiles {
   const audio = object(value, "legacy audio config");
   if (audio.version === 2) {
     object(audio, "legacy audio config", ["version", "physical", "virtual"]);
-    return profiles({ physical: audio.physical, virtual: audio.virtual });
+    return legacyProfiles({ physical: audio.physical, virtual: audio.virtual });
   }
   if (audio.version !== undefined && audio.version !== 1) throw new Error("Unsupported legacy audio config version");
   object(audio, "legacy audio config", ["version", "microphone", "speaker"]);
@@ -186,11 +204,11 @@ function legacyAudio(value: unknown): TalkAudioProfiles {
   return { physical: validateTalkDeviceSettings(settings), virtual: {} };
 }
 
-function legacyPolicy(value: unknown, config: TalkConfig): void {
+function legacyPolicy(value: unknown, config: TalkConfig, virtual: TalkDeviceSettings): void {
   const settings = object(value, "legacy FaceTime config", [...policyKeys, "autoAnswer", "inputDevice", "outputDevice"]);
   if (settings.autoAnswer === true) throw new Error("Disable autoAnswer first: set autoAnswer to false in the legacy FaceTime config and restart/stop the old service before migrating to talk.json");
   if (settings.autoAnswer !== undefined && typeof settings.autoAnswer !== "boolean") throw new Error("Legacy autoAnswer must be a boolean");
-  for (const [key, selection] of [["inputDevice", config.audio.virtual.speaker], ["outputDevice", config.audio.virtual.microphone]] as const) {
+  for (const [key, selection] of [["inputDevice", virtual.speaker], ["outputDevice", virtual.microphone]] as const) {
     const name = settings[key];
     if (name === undefined || name === null) continue; // Swift's optional device names may be encoded as null.
     if (!validString(name, 256)) throw new Error(`Invalid legacy ${key}`);
@@ -200,15 +218,42 @@ function legacyPolicy(value: unknown, config: TalkConfig): void {
   config.facetime = policy({ ...defaults().facetime, ...provided });
 }
 
+/** Validate all of v1 (including the discarded virtual pair) before writing anything. */
+async function canonical(path: string, bytes: Buffer): Promise<TalkConfig> {
+  const value = object(parse(bytes, path), "Talk config", ["version", "audio", "facetime"]);
+  if (value.version !== 1) return validate(value);
+  const audio = legacyProfiles(value.audio);
+  const config: TalkConfig = {
+    version: 2,
+    audio: { physical: audio.physical, virtual: { ...MANAGED_VIRTUAL_AUDIO } },
+    facetime: policy(value.facetime),
+  };
+  const migrated = payload(config);
+  const backup = `${path}.pre-v2.bak`;
+  if (!await publish(backup, bytes)) {
+    const saved = await readPrivate(backup);
+    if (!saved?.equals(bytes)) throw new Error(`Migration backup differs from the v1 config: ${backup}; it will not be overwritten`);
+  }
+  const latest = await readPrivate(path);
+  if (latest === undefined) throw new Error("Talk config disappeared during migration; restore the backup before retrying");
+  if (!latest.equals(bytes)) return canonical(path, latest); // A concurrent canonical edit wins.
+  await publish(path, migrated, true);
+  return config;
+}
+
 async function load(path: string, legacyPaths?: LegacyPaths): Promise<TalkConfig> {
   const current = await readPrivate(path);
-  if (current !== undefined) return validate(parse(current, path));
+  if (current !== undefined) return canonical(path, current);
+  if (await readPrivate(`${path}.pre-v2.bak`) !== undefined) {
+    throw new Error("Shared talk.json is missing but a pre-v2 migration backup already exists; restore a known shared config before retrying. Old calling policy is not re-imported automatically");
+  }
   const paths = legacyPaths ?? (path === resolve(getTalkConfigPath()) ? {
     audio: join(getAgentDir(), "talk-devices.json"),
     facetime: join(homedir(), ".config", "pi-facetime", "config.json"),
   } : {});
   const config = defaults();
   const originals: { path: string; bytes: Buffer }[] = [];
+  let oldVirtual: TalkDeviceSettings = {};
   for (const kind of ["audio", "facetime"] as const) {
     const source = paths[kind];
     if (!source) continue;
@@ -217,8 +262,11 @@ async function load(path: string, legacyPaths?: LegacyPaths): Promise<TalkConfig
     if (bytes === undefined) continue;
     try {
       const value = parse(bytes, source);
-      if (kind === "audio") config.audio = legacyAudio(value);
-      else legacyPolicy(value, config);
+      if (kind === "audio") {
+        const audio = legacyAudio(value);
+        config.audio.physical = audio.physical;
+        oldVirtual = audio.virtual;
+      } else legacyPolicy(value, config, oldVirtual);
     } catch (error) {
       throw new Error(`Invalid legacy ${kind} config ${source}: ${error instanceof Error ? error.message : String(error)}`, { cause: error });
     }
@@ -228,7 +276,7 @@ async function load(path: string, legacyPaths?: LegacyPaths): Promise<TalkConfig
   for (const original of originals) {
     if (await readPrivate(`${original.path}.pre-talk-json.bak`) !== undefined) {
       const winner = await readPrivate(path);
-      if (winner !== undefined) return validate(parse(winner, path));
+      if (winner !== undefined) return canonical(path, winner);
       throw new Error("Shared talk.json is missing but migration backups already exist; restore a known shared config or explicitly archive the legacy files before starting fresh. Old calling policy is not re-imported automatically");
     }
   }
@@ -240,7 +288,7 @@ async function load(path: string, legacyPaths?: LegacyPaths): Promise<TalkConfig
   // A concurrent creator won. Its canonical policy is authoritative, never the legacy files.
   const winner = await readPrivate(path);
   if (winner === undefined) throw new Error("Talk config disappeared during creation; retry");
-  return validate(parse(winner, path));
+  return canonical(path, winner);
 }
 
 async function serialized<T>(path: string, operation: () => Promise<T>): Promise<T> {
@@ -263,6 +311,12 @@ export async function loadTalkConfig(path = getTalkConfigPath(), legacyPaths?: L
   return serialized(key, () => withRepairError(key, () => load(key, legacyPaths)));
 }
 
+export async function loadTalkFaceTimeRecipient(path = getTalkConfigPath()): Promise<string> {
+  const recipients = (await loadTalkConfig(path)).facetime.allowedRecipients;
+  if (recipients.length !== 1) throw new Error("FaceTime calling requires exactly one configured owner in facetime.allowedRecipients");
+  return recipients[0];
+}
+
 export async function updateTalkConfig(mutator: (config: TalkConfig) => void | Promise<void>, path = getTalkConfigPath()): Promise<void> {
   const key = resolve(path);
   await serialized(key, () => withRepairError(key, async () => {
@@ -282,5 +336,5 @@ export async function updateTalkConfig(mutator: (config: TalkConfig) => void | P
 
 /** Only audio is reset. An invalid canonical policy must be repaired explicitly. */
 export async function resetTalkAudioProfiles(path = getTalkConfigPath()): Promise<void> {
-  await updateTalkConfig((config) => { config.audio = { physical: {}, virtual: {} }; }, path);
+  await updateTalkConfig((config) => { config.audio = defaults().audio; }, path);
 }

@@ -3,9 +3,11 @@ import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 
 interface FaceTimeControls {
   status(): { enabled: boolean };
-  call(to: string, purpose?: string): Promise<unknown>;
+  call(purpose?: string): Promise<unknown>;
   answer(): Promise<unknown>;
   hangup(): Promise<unknown>;
+  shareScreen(display: string): Promise<unknown>;
+  stopSharing(): Promise<unknown>;
 }
 
 /** No declarations before FaceTime mode; hidden and uncallable after leaving it. */
@@ -45,18 +47,39 @@ export function createFaceTimeTools(pi: Pick<ExtensionAPI, "registerTool" | "get
     }
     pi.registerTool({
       name: "facetime_call", label: "FaceTime call", ...visibility,
-      description: "Place one explicitly requested FaceTime Audio call to an exact allowlisted phone number or email. Supply the concise purpose you want to discuss after the user acknowledges the greeting, using known context/verified facts only. Prepare virtual Talk audio first. A successful submission is not proof of connection. Do not dial autonomously or retry after timeout/disconnect.",
+      description: "Place one explicitly requested FaceTime Audio call to the sole owner configured locally in talk.json. Supply the concise purpose you want to discuss after the user acknowledges the greeting, using known context/verified facts only. The recipient is never model-selected. Prepare virtual Talk audio first. A successful submission is not proof of connection. Do not dial autonomously or retry after timeout/disconnect.",
       ...{ annotations: { readOnlyHint: false, destructiveHint: true, idempotentHint: false, openWorldHint: true } },
       parameters: Type.Object({
-        to: Type.String({ description: "Exact phone number or email configured in the local Swift recipient allowlist", minLength: 1, maxLength: 512 }),
-        reason: Type.String({ description: "Why you are calling: known result, update, or question to present after the user's first reply. Not a new task or approval. Concise, at most 300 UTF-8 bytes.", minLength: 1, maxLength: 240 }),
+        reason: Type.String({ description: "Why you are calling the configured owner: known result, update, or question to present after their first reply. Not a new task or approval. Concise, at most 300 UTF-8 bytes.", minLength: 1, maxLength: 240 }),
       }),
       async execute(_id, params, signal) {
-        const result = await requireMode(signal).call(params.to, params.reason);
+        const result = await requireMode(signal).call(params.reason);
         return { content: [{ type: "text", text: JSON.stringify(result ?? {}) }], details: result };
       },
     });
-    const names = ["facetime_status", "facetime_answer", "facetime_hangup", "facetime_call"];
+    pi.registerTool({
+      name: "facetime_share_screen", label: "FaceTime share screen", ...visibility,
+      description: "Only on an explicit user request, share one entire screen in the current owned, verified connected FaceTime call. Requires the exact display name (case and spacing preserved); not a window or application. Verifies sharing with Allow Control off; macOS may initially default that permission on before the bridge disables it. Never accepts remote control requests. Never share automatically or retry after an error, timeout, or disconnect.",
+      ...{ annotations: { readOnlyHint: false, destructiveHint: true, idempotentHint: false, openWorldHint: true } },
+      parameters: Type.Object({
+        display: Type.String({ description: "Exact display name of the entire screen explicitly requested by the user. No fuzzy matching, window, or application selection.", minLength: 1 }),
+      }),
+      async execute(_id, params, signal) {
+        const result = await requireMode(signal).shareScreen(params.display);
+        return { content: [{ type: "text", text: JSON.stringify(result ?? {}) }], details: result };
+      },
+    });
+    pi.registerTool({
+      name: "facetime_stop_sharing", label: "FaceTime stop sharing", ...visibility,
+      description: "Only on an explicit user request, stop entire-screen sharing in the current owned, verified connected FaceTime call and verify it stopped. Does not end the call or grant remote control. Never retry automatically after an error, timeout, or disconnect.",
+      ...{ annotations: { readOnlyHint: false, destructiveHint: true, idempotentHint: false, openWorldHint: true } },
+      parameters: Type.Object({}),
+      async execute(_id, _params, signal) {
+        const result = await requireMode(signal).stopSharing();
+        return { content: [{ type: "text", text: JSON.stringify(result ?? {}) }], details: result };
+      },
+    });
+    const names = ["facetime_status", "facetime_answer", "facetime_hangup", "facetime_call", "facetime_share_screen", "facetime_stop_sharing"];
     pi.setActiveTools(available ? [...new Set([...previousTools, ...names])] : previousTools.filter(name => !names.includes(name)));
   }
   return { setAvailable };

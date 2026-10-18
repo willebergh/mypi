@@ -18,7 +18,7 @@ use webrtc::track::track_local::track_local_static_sample::TrackLocalStaticSampl
 
 use crate::audio::{PlaybackBuffer, SpeakerControl, SpeakerState};
 use crate::playout::{PacketPlayout, PlayoutClock, PlayoutFrame, PlayoutMark};
-use crate::protocol::Event;
+use crate::protocol::{ErrorCode, Event};
 use crate::resample::LinearResampler;
 
 #[path = "v3_capture.rs"]
@@ -72,8 +72,17 @@ pub(crate) async fn with_send_deadline<F: Future>(
 }
 
 pub(crate) async fn report_terminal_error(events: &mpsc::Sender<Event>, message: &str) {
+    report_coded_terminal_error(events, message, None).await;
+}
+
+pub(crate) async fn report_coded_terminal_error(
+    events: &mpsc::Sender<Event>,
+    message: &str,
+    code: Option<ErrorCode>,
+) {
     let delivered = with_send_deadline(events.send(Event::Error {
         message: message.to_owned(),
+        code,
     }))
     .await;
     if !matches!(delivered, Ok(Ok(()))) {

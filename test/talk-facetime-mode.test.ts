@@ -56,7 +56,7 @@ class FakeClient implements FaceTimeClient {
     this.callbacks.onSnapshot(this.current);
   }
   close() { this.closed = true; }
-  mutations() { return this.commands.filter((entry) => ["call", "answer", "hangup"].includes(entry.command)); }
+  mutations() { return this.commands.filter((entry) => ["call", "answer", "hangup", "screen.share", "screen.stop"].includes(entry.command)); }
 }
 function harness(t: test.TestContext, extra: Partial<FaceTimeModeOptions> = {}, initial = snapshot()) {
   const voices: Voice[] = [];
@@ -65,7 +65,7 @@ function harness(t: test.TestContext, extra: Partial<FaceTimeModeOptions> = {}, 
   const events: FaceTimeRecord[] = [];
   let client!: FakeClient;
   let leases = 0;
-  const mode = createFaceTimeMode({ routing, prepareVoice: async (signal) => {
+  const mode = createFaceTimeMode({ routing, recipient: "synthetic@example.invalid", prepareVoice: async (signal) => {
     signals.push(signal);
     const voice = new Voice(); voices.push(voice); return voice;
   }, acquireLease: () => { leases++; return () => { leases--; }; },
@@ -194,7 +194,7 @@ test("shared-config mode reloads the same file at idle and verifies routing with
   h.client.handler = async (command) => {
     if (command === "config.reload") return snapshot(undefined, { configuration: { autoAnswer: false, configPath, inputDevice: routing.input, outputDevice: routing.output } });
     if (command === "audio.devices") return { devices: [
-      { section: "input", name: routing.input, selected: true, enabled: true },
+      { section: "input", name: routing.input, identifier: "system-default:io.github.willebergh.pitalk.audio.visible", selected: true, enabled: true },
       { section: "output", name: routing.output, selected: true, enabled: true },
     ] };
     throw new Error(`unexpected command ${command}`);
@@ -223,10 +223,10 @@ test("shared config path mismatch or an active call never triggers reload or rou
 test("FaceTime outgoing prepares gated voice, sends once and only adopts its response callId", async (t) => {
   const h = harness(t);
   await h.mode.enable();
-  await h.mode.call("synthetic@example.invalid");
+  await h.mode.call();
   assert.deepEqual(h.voices[0].gates, [false]);
   assert.deepEqual(h.client.mutations(), [{ command: "call", args: { to: "synthetic@example.invalid" } }]);
-  await assert.rejects(h.mode.call("second@example.invalid"), /already active/);
+  await assert.rejects(h.mode.call(), /already active/);
   h.client.event("call.dialing", { callId: "outgoing-1", direction: "outgoing" });
   h.client.event("call.connected", { callId: "outgoing-1", direction: "outgoing", verified: true });
   assert.equal(h.voices[0].gates.at(-1), true);
@@ -240,7 +240,7 @@ test("FaceTime outgoing prepares gated voice, sends once and only adopts its res
 test("outgoing introductions require verified audio and happen once per call, not per reconnect", async (t) => {
   const h = harness(t);
   await h.mode.enable();
-  await h.mode.call("synthetic@example.invalid", "The requested checks passed; share the verified result.");
+  await h.mode.call("The requested checks passed; share the verified result.");
   assert.equal(h.voices[0].introductions, 0);
   h.client.event("call.dialing", { callId: "outgoing-1", direction: "outgoing" });
   h.client.event("call.connected", { callId: "outgoing-1", direction: "outgoing", verified: false });
@@ -257,7 +257,7 @@ test("outgoing introductions require verified audio and happen once per call, no
   assert.equal(h.voices[1].gates.at(-1), true);
   assert.equal(h.voices[1].introductions, 0, "fresh voice transport must not repeat the call's greeting");
   h.client.event("call.ended", { callId: "outgoing-1", direction: "outgoing" });
-  await h.mode.call("synthetic@example.invalid");
+  await h.mode.call();
   h.client.event("call.connected", { callId: "outgoing-1", direction: "outgoing", verified: true });
   assert.equal(h.voices[2].introductions, 1, "a new call gets a new introduction");
 });
@@ -266,7 +266,7 @@ test("invalid call purposes fail before voice preparation or dialing", async (t)
   const h = harness(t);
   await h.mode.enable();
   for (const purpose of ["", " ", "x".repeat(301), "😀".repeat(76), "bad\x1btext", "bad\u202etext"]) {
-    await assert.rejects(h.mode.call("synthetic@example.invalid", purpose), /call purpose/);
+    await assert.rejects(h.mode.call(purpose), /call purpose/);
   }
   assert.equal(h.voices.length, 0);
   assert.deepEqual(h.client.mutations(), []);
@@ -277,7 +277,7 @@ test("incoming and failed outgoing calls do not get an outgoing introduction", a
   assert.equal(incoming.voices[0].introductions, 0);
   const failed = harness(t);
   await failed.mode.enable();
-  await failed.mode.call("synthetic@example.invalid");
+  await failed.mode.call();
   failed.client.event("call.failed", { callId: "outgoing-1", direction: "outgoing" });
   assert.equal(failed.voices[0].introductions, 0);
 });
@@ -389,6 +389,143 @@ test("FaceTime service mutation failure is never retried and duplicate/AX events
   assert.equal(h.events.some((event) => "tree" in event || event.event === "accessibility.reconciled"), false);
 });
 
+test("FaceTime sharing is manual, exact-name entire-screen only, and sends one call-guarded request per action", async (t) => {
+  const h = await connected(t);
+  assert.equal(h.client.commands.some(c => c.command.startsWith("screen.")), false, "connection must never share automatically");
+  const display = "Studio  Display";
+  const sharing = { active: true, display, remoteControl: false, verified: true };
+  const stopped = { active: false, verified: true };
+  h.client.handler = async command => command === "screen.share" ? sharing : stopped;
+  const before = h.client.commands.length;
+  assert.deepEqual(await h.mode.shareScreen(display), sharing);
+  assert.deepEqual(await h.mode.stopSharing(), stopped);
+  assert.deepEqual(h.client.commands.slice(before), [
+    { command: "screen.share", args: { display, expectedCallId: "incoming-1" } },
+    { command: "screen.stop", args: { expectedCallId: "incoming-1" } },
+  ]);
+  for (const invalid of [undefined, null, 42, "", "  ", "Display\nOther", "bad\u0000name"] as unknown[]) {
+    await assert.rejects(h.mode.shareScreen(invalid as string), /exact.*display name/);
+  }
+  assert.equal(h.client.commands.length, before + 2);
+});
+
+test("FaceTime outgoing sharing uses only its response-owned call ID after verified audio", async (t) => {
+  const h = harness(t);
+  await h.mode.enable();
+  await h.mode.call();
+  await assert.rejects(h.mode.shareScreen("Studio Display"), /owned, verified connected call/);
+  h.client.event("call.connected", { callId: "outgoing-1", direction: "outgoing", verified: true });
+  const before = h.client.commands.length;
+  const sharing = { active: true, display: "Studio Display", remoteControl: false, verified: true };
+  const stopped = { active: false, verified: true };
+  h.client.handler = async command => command === "screen.share" ? sharing : stopped;
+  assert.deepEqual(await h.mode.shareScreen("Studio Display"), sharing);
+  assert.deepEqual(await h.mode.stopSharing(), stopped);
+  assert.deepEqual(h.client.commands.slice(before), [
+    { command: "screen.share", args: { display: "Studio Display", expectedCallId: "outgoing-1" } },
+    { command: "screen.stop", args: { expectedCallId: "outgoing-1" } },
+  ]);
+});
+
+test("FaceTime sharing rejects unverified, wrong-display, or remote-control-enabled service results without retry", async (t) => {
+  const h = await connected(t);
+  for (const result of [{}, { active: true, verified: true },
+    { active: true, verified: true, display: "Other Display", remoteControl: false },
+    { active: true, verified: true, display: "Studio Display", remoteControl: true },
+    { active: true, verified: false, display: "Studio Display", remoteControl: false }]) {
+    h.client.handler = async () => result;
+    const before = h.client.commands.length;
+    await assert.rejects(h.mode.shareScreen("Studio Display"), /sharing state did not verify/);
+    assert.equal(h.client.commands.length, before + 1);
+  }
+  h.client.handler = async () => ({ active: true, verified: true });
+  await assert.rejects(h.mode.stopSharing(), /sharing state did not verify/);
+});
+
+test("FaceTime sharing rejects disabled, standby, unverified, unrelated and ending calls without a request", async (t) => {
+  const h = harness(t);
+  const rejectBoth = async () => {
+    const before = h.client?.commands.length ?? 0;
+    await assert.rejects(h.mode.shareScreen("Studio Display"), /owned, verified connected call/);
+    await assert.rejects(h.mode.stopSharing(), /owned, verified connected call/);
+    assert.equal(h.client?.commands.length ?? 0, before);
+  };
+  await rejectBoth();
+  await h.mode.enable();
+  await rejectBoth();
+  h.client.event("call.incoming", { allowed: true });
+  await flush();
+  await rejectBoth();
+  h.client.event("call.connected", { verified: false });
+  await rejectBoth();
+  h.client.event("call.connected", { verified: true });
+  h.client.event("call.connected", { verified: false });
+  await rejectBoth(); // Old owned verification/audio must not override current observed evidence.
+  h.client.event("call.connected", { verified: true });
+  await h.mode.hangup();
+  await rejectBoth();
+  h.client.event("call.connected", { callId: "manual-other", verified: true });
+  await rejectBoth();
+  await h.mode.disable();
+  await rejectBoth();
+});
+
+for (const action of ["shareScreen", "stopSharing"] as const) {
+  test(`FaceTime ${action} rejects stale results across lifecycle changes without retry or takeover`, async (t) => {
+    for (const change of ["ended", "replacement", "disconnect", "reconnect", "service-restart", "hangup", "disable", "voiceEnded"] as const) {
+      const h = await connected(t);
+      const response = deferred<unknown>();
+      h.client.handler = async command => {
+        if (command.startsWith("screen.")) return response.promise;
+        if (command === "audio.devices") return { devices: [
+          { section: "input", name: routing.input, selected: true, enabled: true },
+          { section: "output", name: routing.output, selected: true, enabled: true },
+        ] };
+        return {};
+      };
+      const pending = action === "shareScreen" ? h.mode.shareScreen("Studio Display") : h.mode.stopSharing();
+      const rejected = assert.rejects(pending, /call changed.*outcome unknown/);
+      if (change === "ended") h.client.event("call.ended");
+      else if (change === "replacement") h.client.event("call.connected", { callId: "unrelated", verified: true });
+      else if (change === "disconnect") h.client.disconnect();
+      else if (change === "reconnect" || change === "service-restart") {
+        h.client.disconnect();
+        h.client.reconnect({ phase: "connected", callId: "incoming-1", verified: true }, change === "service-restart" ? { serviceInstanceId: "service-b" } : {});
+        await flush();
+        assert.equal(h.mode.status().phase, change === "reconnect" ? "connected" : "busy");
+      } else await h.mode[change]();
+      response.resolve({ active: action === "shareScreen", verified: true });
+      await rejected;
+      await flush();
+      const commands = h.client.commands.filter(c => c.command.startsWith("screen."));
+      assert.equal(commands.length, 1, change);
+      assert.equal(commands[0].args?.expectedCallId, "incoming-1", change);
+      assert.equal(commands[0].command, action === "shareScreen" ? "screen.share" : "screen.stop");
+    }
+  });
+
+  test(`FaceTime ${action} forwards service errors and never automatically retries`, async (t) => {
+    const h = await connected(t);
+    h.client.handler = async () => { throw new Error("synthetic sharing verification timeout"); };
+    await assert.rejects(action === "shareScreen" ? h.mode.shareScreen("Studio Display") : h.mode.stopSharing(), /synthetic sharing verification timeout/);
+    h.client.event("call.connected", { verified: true });
+    await flush();
+    assert.equal(h.client.commands.filter(c => c.command.startsWith("screen.")).length, 1);
+    assert.equal(h.mode.status().phase, "connected", "sharing failure must not tear down owned voice");
+  });
+}
+
+test("FaceTime sharing never adopts an unrelated verified reconnect snapshot", async (t) => {
+  const h = await connected(t);
+  h.client.disconnect();
+  await assert.rejects(h.mode.shareScreen("Studio Display"), /owned, verified connected call/);
+  h.client.reconnect({ phase: "connected", callId: "manual-other", verified: true });
+  await flush();
+  await assert.rejects(h.mode.shareScreen("Studio Display"), /owned, verified connected call/);
+  await assert.rejects(h.mode.stopSharing(), /owned, verified connected call/);
+  assert.equal(h.client.commands.some(c => c.command.startsWith("screen.")), false);
+});
+
 test("FaceTime owner lease excludes other controllers, recovers only dead PID empty markers and releases safely", (t) => {
   const dir = mkdtempSync("/tmp/pi-ft-owner-");
   const path = join(dir, "s");
@@ -461,7 +598,7 @@ test("FaceTime reentrant status cancellation cannot send an answer/call after di
     const h = harness(t, { onStatus(status) { if (status.phase === phase) void h.mode.disable(); } });
     await h.mode.enable();
     if (phase === "answering") h.client.event("call.incoming", { allowed: true });
-    else await assert.rejects(h.mode.call("synthetic@example.invalid"), /cancelled/);
+    else await assert.rejects(h.mode.call(), /cancelled/);
     await flush();
     assert.deepEqual(h.client.mutations(), []);
     assert.equal(h.mode.status().phase, "disabled");
@@ -480,7 +617,7 @@ test("FaceTime outgoing lifecycle can precede its response, but terminal evidenc
     const h = harness(t);
     await h.mode.enable();
     h.client.handler = async (command) => command === "call" ? response.promise : {};
-    const calling = h.mode.call("synthetic@example.invalid");
+    const calling = h.mode.call();
     void calling.catch(() => {});
     await flush();
     h.client.event("call.connected", { callId: "response-id", direction: "outgoing", verified: true });
@@ -514,7 +651,7 @@ for (const action of ["hangup", "disable", "voiceEnded"] as const) {
     await h.mode.enable();
     const response = deferred<unknown>();
     h.client.handler = async (command) => command === "call" ? response.promise : {};
-    const calling = h.mode.call("+46000000000").catch(error => error);
+    const calling = h.mode.call().catch(error => error);
     await flush();
     assert.deepEqual(h.client.mutations().map(item => item.command), ["call"]);
     let ended = false;
@@ -541,7 +678,7 @@ test("FaceTime disable after uncertain outgoing submission never retries or gues
   await h.mode.enable();
   const response = deferred<unknown>();
   h.client.handler = async (command) => command === "call" ? response.promise : {};
-  const calling = h.mode.call("+46000000000").catch(error => error);
+  const calling = h.mode.call().catch(error => error);
   await flush();
   const ending = h.mode.disable();
   response.reject(new Error("FaceTime call timed out; outcome unknown"));

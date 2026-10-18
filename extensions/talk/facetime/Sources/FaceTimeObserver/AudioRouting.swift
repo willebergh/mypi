@@ -1,5 +1,9 @@
 import ApplicationServices
+import CoreAudio
 import Foundation
+
+let piTalkVisibleAudioUID = "io.github.willebergh.pitalk.audio.visible"
+let faceTimeSystemDefaultInputIdentifier = "system-default:\(piTalkVisibleAudioUID)"
 
 struct FaceTimeAudioDevice: Equatable {
     let section: String
@@ -29,7 +33,7 @@ func listFaceTimeAudioDevices(targets: [ProcessTarget]) -> FaceTimeAudioRoutingR
     guard let menu = faceTimeVideoMenu(targets: targets) else {
         return FaceTimeAudioRoutingResult(ok: false, error: "FaceTime's Video menu is unavailable; open FaceTime and retry", devices: [])
     }
-    return FaceTimeAudioRoutingResult(ok: true, error: nil, devices: audioDevices(in: menu))
+    return FaceTimeAudioRoutingResult(ok: true, error: nil, devices: routedAudioDevices(in: menu))
 }
 
 func selectFaceTimeAudioDevices(input: String?, output: String?, targets: [ProcessTarget]) -> FaceTimeAudioRoutingResult {
@@ -53,13 +57,22 @@ func selectFaceTimeAudioDevices(input: String?, output: String?, targets: [Proce
         guard let menu = faceTimeVideoMenu(targets: targets) else {
             return FaceTimeAudioRoutingResult(ok: false, error: "FaceTime's Video menu is unavailable; open FaceTime and retry", devices: selectedDevices)
         }
-        let devices = audioDevices(in: menu)
+        let devices = routedAudioDevices(in: menu)
         let matches = devices.filter { $0.section == request.0 && $0.name.caseInsensitiveCompare(wanted) == .orderedSame }
         guard matches.count == 1 else {
             let message = matches.isEmpty
                 ? "No FaceTime \(request.0) device exactly named '\(wanted)'"
                 : "FaceTime \(request.0) device name '\(wanted)' is ambiguous"
             return FaceTimeAudioRoutingResult(ok: false, error: message, devices: devices)
+        }
+        let match = matches[0]
+        if request.0 == "input", match.identifier == faceTimeSystemDefaultInputIdentifier,
+           hasVerifiedSoleDefaultPiTalkInput(in: menu) {
+            // FaceTime omits its entire Microphone section when Pi Talk is the
+            // sole/default input. Core Audio's exact fixed UID is then the only
+            // available selection authority; there is no AX item to pick.
+            selectedDevices.append(match)
+            continue
         }
         guard let element = menuItem(named: wanted, section: request.0, in: menu) else {
             return FaceTimeAudioRoutingResult(ok: false, error: "Device disappeared while selecting '\(wanted)'", devices: devices)
@@ -74,7 +87,7 @@ func selectFaceTimeAudioDevices(input: String?, output: String?, targets: [Proce
         guard result == .success else {
             return FaceTimeAudioRoutingResult(ok: false, error: "Could not select '\(wanted)': \(axErrorName(result))", devices: devices)
         }
-        selectedDevices.append(matches[0])
+        selectedDevices.append(match)
     }
 
     let final = listFaceTimeAudioDevices(targets: targets)
@@ -112,10 +125,79 @@ private func faceTimeVideoMenu(targets: [ProcessTarget]) -> AXUIElement? {
     })
 }
 
-private func audioDevices(in menu: AXUIElement) -> [FaceTimeAudioDevice] {
+private func routedAudioDevices(in menu: AXUIElement) -> [FaceTimeAudioDevice] {
+    let children = axChildren(menu)
+    let devices = audioDevices(in: children)
+    return addingSoleDefaultPiTalkInput(
+        to: devices,
+        microphoneSectionPresent: hasAudioSection("Microphone", in: children),
+        outputSectionPresent: hasAudioSection("Output", in: children),
+        defaultInputUID: coreAudioDefaultInputUID()
+    )
+}
+
+private func hasAudioSection(_ name: String, in items: [AXUIElement]) -> Bool {
+    items.contains {
+        axString($0, kAXRoleAttribute as String) == (kAXMenuItemRole as String) &&
+        axString($0, kAXTitleAttribute as String) == name
+    }
+}
+
+private func hasVerifiedSoleDefaultPiTalkInput(in menu: AXUIElement) -> Bool {
+    let children = axChildren(menu)
+    return !hasAudioSection("Microphone", in: children) &&
+        hasAudioSection("Output", in: children) &&
+        coreAudioDefaultInputUID() == piTalkVisibleAudioUID
+}
+
+// FaceTime 36 on macOS 26.6 omits the complete Microphone menu section when
+// Pi Talk is the system's sole/default input. Accept that narrow case only when
+// Core Audio independently resolves the current default to the driver's fixed
+// visible UID. If a selector exists, its AX selection remains authoritative.
+func addingSoleDefaultPiTalkInput(to devices: [FaceTimeAudioDevice], microphoneSectionPresent: Bool,
+                                  outputSectionPresent: Bool, defaultInputUID: String?) -> [FaceTimeAudioDevice] {
+    guard !microphoneSectionPresent, outputSectionPresent,
+          !devices.contains(where: { $0.section == "input" }),
+          defaultInputUID == piTalkVisibleAudioUID else { return devices }
+    return devices + [FaceTimeAudioDevice(
+        section: "input",
+        name: "Pi Talk",
+        identifier: faceTimeSystemDefaultInputIdentifier,
+        selected: true,
+        enabled: true
+    )]
+}
+
+private func coreAudioDefaultInputUID() -> String? {
+    var defaultAddress = AudioObjectPropertyAddress(
+        mSelector: kAudioHardwarePropertyDefaultInputDevice,
+        mScope: kAudioObjectPropertyScopeGlobal,
+        mElement: kAudioObjectPropertyElementMain
+    )
+    var deviceID = AudioObjectID(kAudioObjectUnknown)
+    var size = UInt32(MemoryLayout<AudioObjectID>.size)
+    let deviceIDSize = UInt32(MemoryLayout<AudioObjectID>.size)
+    guard AudioObjectGetPropertyData(
+        AudioObjectID(kAudioObjectSystemObject), &defaultAddress, 0, nil, &size, &deviceID
+    ) == noErr, size == deviceIDSize, deviceID != kAudioObjectUnknown else { return nil }
+
+    var uidAddress = AudioObjectPropertyAddress(
+        mSelector: kAudioDevicePropertyDeviceUID,
+        mScope: kAudioObjectPropertyScopeGlobal,
+        mElement: kAudioObjectPropertyElementMain
+    )
+    var uid: Unmanaged<CFString>?
+    let uidSize = UInt32(MemoryLayout<Unmanaged<CFString>?>.size)
+    size = uidSize
+    guard AudioObjectGetPropertyData(deviceID, &uidAddress, 0, nil, &size, &uid) == noErr,
+          size == uidSize else { return nil }
+    return uid?.takeUnretainedValue() as String?
+}
+
+private func audioDevices(in items: [AXUIElement]) -> [FaceTimeAudioDevice] {
     var section: String?
     var output: [FaceTimeAudioDevice] = []
-    for item in axChildren(menu) {
+    for item in items {
         guard axString(item, kAXRoleAttribute as String) == (kAXMenuItemRole as String) else { continue }
         let title = axString(item, kAXTitleAttribute as String) ?? ""
         if title == "Microphone" { section = "input"; continue }

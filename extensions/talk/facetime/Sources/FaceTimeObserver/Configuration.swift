@@ -30,18 +30,20 @@ struct DaemonConfiguration: Decodable, Equatable {
     var allowedRecipients: [String] = []
     var recipientAliases: [String: [String]] = [:]
     var autoAnswer: Bool { false }
-    var inputDevice: String? { audio.virtual.speaker?.name }
-    var outputDevice: String? { audio.virtual.microphone?.name }
+    // Both FaceTime menu sections use the driver's visible device. The internal
+    // endpoint is for Talk, not an inverse microphone/speaker pair.
+    var inputDevice: String? { audio == nil ? nil : "Pi Talk" }
+    var outputDevice: String? { audio == nil ? nil : "Pi Talk" }
     var callStartTimeoutSeconds: Double = 15
     var ringingTimeoutSeconds: Double = 60
-    private var audio = Audio()
+    private var audio: Audio?
 
     init() {}
 
     init(from decoder: Decoder) throws {
         let root = try strictContainer(decoder, keys: ["version", "audio", "facetime"])
-        guard try root.decode(Int.self, forKey: Key("version")) == 1 else {
-            throw TalkConfigurationError(message: "Unsupported Talk config version; expected version 1. Update/migrate this file with Pi, then retry.")
+        guard try root.decode(Int.self, forKey: Key("version")) == 2 else {
+            throw TalkConfigurationError(message: "Unsupported Talk config version; expected version 2. Update/migrate this file with Pi, then retry.")
         }
         audio = try root.decode(Audio.self, forKey: Key("audio"))
         let policy = try root.decode(Policy.self, forKey: Key("facetime"))
@@ -91,7 +93,7 @@ struct DaemonConfiguration: Decodable, Equatable {
             }
             return try JSONDecoder().decode(DaemonConfiguration.self, from: data)
         } catch {
-            throw TalkConfigurationError(message: "Invalid shared Talk config at \(path): \(error). Expected version 1 with audio/facetime sections, not the legacy FaceTime config. Repair/migrate it with Pi, then retry.")
+            throw TalkConfigurationError(message: "Invalid shared Talk config at \(path): \(error). Expected version 2 with audio/facetime sections, not the legacy FaceTime config. Repair/migrate it with Pi, then retry.")
         }
     }
 
@@ -176,14 +178,29 @@ private struct DevicePair: Decodable, Equatable {
     }
 }
 
+private struct VirtualDevice: Decodable, Equatable {
+    let visibleUid: String
+    let internalUid: String
+
+    init(from decoder: Decoder) throws {
+        let values = try strictContainer(decoder, keys: ["visibleUid", "internalUid"])
+        visibleUid = try values.decode(String.self, forKey: Key("visibleUid"))
+        internalUid = try values.decode(String.self, forKey: Key("internalUid"))
+        guard visibleUid == "io.github.willebergh.pitalk.audio.visible",
+              internalUid == "io.github.willebergh.pitalk.audio.internal" else {
+            throw TalkConfigurationError(message: "audio.virtual requires the exact Pi Talk visibleUid/internalUid constants")
+        }
+    }
+}
+
 private struct Audio: Decodable, Equatable {
-    var physical = DevicePair()
-    var virtual = DevicePair()
-    init() {}
+    let physical: DevicePair
+    let virtual: VirtualDevice
+
     init(from decoder: Decoder) throws {
         let values = try strictContainer(decoder, keys: ["physical", "virtual"])
         physical = try values.decode(DevicePair.self, forKey: Key("physical"))
-        virtual = try values.decode(DevicePair.self, forKey: Key("virtual"))
+        virtual = try values.decode(VirtualDevice.self, forKey: Key("virtual"))
     }
 }
 

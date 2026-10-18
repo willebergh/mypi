@@ -5,9 +5,9 @@ import XCTest
 // startup: all app policy dependencies below are synthetic.
 final class ApplicationTests: XCTestCase {
     func testOnlyNoArgumentBridgeBundleUsesApplicationDefault() {
-        func entry(_ arguments: [String] = ["/Applications/Pi FaceTime Bridge.app/Contents/MacOS/facetime-observer"],
+        func entry(_ arguments: [String] = ["/Applications/Pi Talk.app/Contents/MacOS/facetime-observer"],
                    id: String? = "dev.mypi.facetime-bridge",
-                   path: String = "/Applications/Pi FaceTime Bridge.app",
+                   path: String = "/Applications/Pi Talk.app",
                    executable: String? = "facetime-observer") -> Bool {
             usesBridgeApplicationEntry(arguments: arguments, bundleIdentifier: id, bundlePath: path, bundleExecutable: executable)
         }
@@ -17,7 +17,7 @@ final class ApplicationTests: XCTestCase {
         XCTAssertFalse(entry(id: nil))
         XCTAssertFalse(entry(id: "com.apple.FaceTime"))
         XCTAssertFalse(entry(path: "/usr/local/bin"))
-        XCTAssertFalse(entry(path: "/Applications/Pi FaceTime Bridge.app/Contents/MacOS"))
+        XCTAssertFalse(entry(path: "/Applications/Pi Talk.app/Contents/MacOS"))
         XCTAssertFalse(entry(executable: nil))
         XCTAssertFalse(entry(executable: "other-helper"))
         XCTAssertFalse(entry([]))
@@ -186,7 +186,8 @@ final class ApplicationTests: XCTestCase {
         )
         controller.start()
         XCTAssertEqual(received.last?.configPath, first.path)
-        XCTAssertEqual(received.last?.inputDevice, "Pi virtual speaker")
+        XCTAssertEqual(received.last?.inputDevice, "Pi Talk")
+        XCTAssertEqual(received.last?.outputDevice, "Pi Talk")
         XCTAssertFalse(received.last!.autoAnswer)
         chosen = second.path // Equivalent to the picker persisting a new path.
         controller.start() // Running means no reload or live routing.
@@ -197,6 +198,8 @@ final class ApplicationTests: XCTestCase {
         XCTAssertEqual(loads, 2)
         XCTAssertEqual(received.last?.configPath, second.path)
         XCTAssertEqual(received.last?.allowedCallers, ["Second caller"])
+        XCTAssertEqual(received.last?.inputDevice, "Pi Talk")
+        XCTAssertEqual(received.last?.outputDevice, "Pi Talk")
         controller.stop()
         let explicit = Options(arguments: ["binary", "app", "--config", first.path], persistedConfigPath: chosen)
         XCTAssertEqual(explicit.configPath, first.path)
@@ -226,6 +229,36 @@ final class ApplicationTests: XCTestCase {
         XCTAssertEqual(controller.status, .running)
         XCTAssertEqual(received?.configPath, shared.path)
         XCTAssertEqual(received?.allowedCallers, ["Caller"])
+        controller.stop()
+    }
+
+    func testInvalidVirtualUIDPreventsStartupUntilRepairedAndRetried() throws {
+        let file = try TemporaryTalkConfig()
+        var object = try SharedConfigFixture.object()
+        var audio = object["audio"] as! [String: Any]
+        var virtual = audio["virtual"] as! [String: String]
+        virtual["internalUid"] = "io.github.willebergh.pitalk.audio.visible"
+        audio["virtual"] = virtual
+        object["audio"] = audio
+        try file.writeObject(object)
+        var received: [Options] = []
+        let controller = BridgeApplicationController(
+            loadOptions: { Options(arguments: ["binary", "app", "--config", file.path]) },
+            isTrusted: { true }, promptForPermission: { XCTFail("Must not prompt") },
+            makeService: { received.append($0); return FakeBridgeService() }
+        )
+        controller.start()
+        guard case .startupError(let message) = controller.status else { return XCTFail("Expected invalid UID error") }
+        XCTAssertTrue(message.contains(file.path))
+        XCTAssertTrue(message.contains("visibleUid/internalUid"))
+        XCTAssertTrue(message.contains("Retry"))
+        XCTAssertTrue(received.isEmpty)
+        try file.write()
+        controller.start()
+        XCTAssertEqual(controller.status, .running)
+        XCTAssertEqual(received.count, 1)
+        XCTAssertEqual(received.last?.inputDevice, "Pi Talk")
+        XCTAssertEqual(received.last?.outputDevice, "Pi Talk")
         controller.stop()
     }
 

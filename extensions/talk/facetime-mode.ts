@@ -28,6 +28,8 @@ export interface FaceTimeModeOptions {
   configPath?: string;
   /** Must create an OWNED voice session with both audio directions initially gated. Honor abort. */
   prepareVoice(signal: AbortSignal): Promise<FaceTimeVoiceHandle>;
+  /** Sole owner address loaded from the private shared config; never model-selected. */
+  recipient: string;
   routing: { input: string; output: string };
   onStatus?(status: FaceTimeStatus): void;
   onEvent?(event: Record<string, unknown>): void;
@@ -43,9 +45,13 @@ export interface FaceTimeMode {
   enable(): Promise<void>;
   disable(): Promise<void>;
   status(): FaceTimeStatus;
-  call(to: string, purpose?: string): Promise<unknown>;
+  call(purpose?: string): Promise<unknown>;
   answer(): Promise<unknown>;
   hangup(): Promise<unknown>;
+  /** Explicit request only: share one entire screen by exact display name, never grant remote control. */
+  shareScreen(display: string): Promise<unknown>;
+  /** Explicit request only; both sharing mutations require an owned, verified connected call. */
+  stopSharing(): Promise<unknown>;
   voiceEnded(): Promise<void>;
 }
 
@@ -187,7 +193,7 @@ export function createFaceTimeMode(options: FaceTimeModeOptions): FaceTimeMode {
       throw new Error(`FaceTime bridge must use the shared Talk config at ${options.configPath}. Update the app if needed, choose that file in its menu, then stop/start the service.`);
     }
     if (configuration.autoAnswer !== false) throw new Error("FaceTime service must have autoAnswer=false; Pi controls readiness. Restart the service with auto-answer disabled");
-    // Snapshot device names are derived from the shared virtual profile.
+    // Snapshot device names use the managed visible Pi Talk endpoint in both directions.
     if (!checkRouting) return;
     for (const section of ["input", "output"] as const) {
       const configured = configuration[`${section}Device`];
@@ -413,6 +419,26 @@ export function createFaceTimeMode(options: FaceTimeModeOptions): FaceTimeMode {
     publish("ending");
     return session.endingRequest;
   }
+  async function sharingRequest(command: "screen.share" | "screen.stop", display?: string): Promise<unknown> {
+    const session = owned;
+    const current = client;
+    const epoch = connection;
+    const controller = session?.controller;
+    const valid = () => !!session && client === current && connection === epoch && session.controller === controller
+      && state.connected && state.phase === "connected" && live(session) && session.verified && session.audio && !!session.voice
+      && !!session.id && session.id === callId(observed) && observed.phase === "connected" && observed.verified === true;
+    if (!session || !current || !valid()) throw new Error("FaceTime screen sharing requires an owned, verified connected call with audio enabled");
+    // One mutation, no probes/retries or local sharing cache. The service verifies
+    // the entire-screen picker and Allow Control off, guarded by this call ID.
+    const result = await current.request(command, { ...(display !== undefined ? { display } : {}), expectedCallId: session.id });
+    if (!valid()) throw new Error("FaceTime call changed during screen sharing; outcome unknown, do not retry automatically");
+    const evidence = faceTimeRecord(result);
+    if (evidence.verified !== true || evidence.active !== (command === "screen.share")
+      || (command === "screen.share" && (evidence.display !== display || evidence.remoteControl !== false))) {
+      throw new Error("FaceTime sharing state did not verify; check FaceTime manually, do not retry automatically");
+    }
+    return result;
+  }
   function disable(): Promise<void> {
     if (disabling) return disabling;
     if (!state.enabled && !client && !release) return Promise.resolve();
@@ -476,8 +502,8 @@ export function createFaceTimeMode(options: FaceTimeModeOptions): FaceTimeMode {
         if (run !== generation || !state.enabled) throw new Error("FaceTime enable cancelled");
         if (active(snapshot.call) || active(observed)) throw new Error("FaceTime already has an active call; end it before enabling Pi FaceTime mode (no takeover)");
         if (options.configPath) {
-          // The app derives and applies the inverse virtual pair itself. This
-          // idle-only reload also refreshes allowlists/timeouts from that file.
+          // The app applies the managed visible Pi Talk endpoint in both
+          // directions. This idle-only reload also refreshes allowlists/timeouts.
           const refreshed = validateFaceTimeSnapshot(await current.request("config.reload"));
           if (run !== generation || !state.enabled) throw new Error("FaceTime enable cancelled");
           if (refreshed.serviceInstanceId !== instance) throw new Error("FaceTime service changed during shared config reload");
@@ -506,8 +532,9 @@ export function createFaceTimeMode(options: FaceTimeModeOptions): FaceTimeMode {
     enable, disable,
     status: () => ({ ...state }),
     answer: incoming,
-    async call(to, purpose) {
-      if (typeof to !== "string" || !to.trim() || Buffer.byteLength(to) > 1024) throw new Error("Invalid FaceTime recipient");
+    async call(purpose) {
+      const to = options.recipient;
+      if (typeof to !== "string" || !to.trim() || Buffer.byteLength(to) > 1024) throw new Error("Invalid configured FaceTime owner recipient");
       if (purpose !== undefined && (typeof purpose !== "string" || !purpose.trim() || Buffer.byteLength(purpose) > 300 ||
         Buffer.from(purpose).toString("utf8") !== purpose || /[\x00-\x08\x0b-\x1f\x7f-\x9f\u202a-\u202e\u2066-\u2069]/u.test(purpose))) {
         throw new Error("FaceTime call purpose must be nonempty safe text, at most 300 UTF-8 bytes");
@@ -546,6 +573,13 @@ export function createFaceTimeMode(options: FaceTimeModeOptions): FaceTimeMode {
       } catch (error) { operationFailed(session, error, controller); throw error; }
     },
     hangup: endOwned,
+    async shareScreen(display) {
+      if (typeof display !== "string" || !display.trim() || Buffer.from(display).toString("utf8") !== display || /[\x00-\x1f\x7f-\x9f]/u.test(display)) {
+        throw new Error("FaceTime sharing requires an exact, nonempty display name for an entire screen");
+      }
+      return sharingRequest("screen.share", display);
+    },
+    stopSharing: () => sharingRequest("screen.stop"),
     async voiceEnded() {
       try { await endOwned(); }
       catch (error) { report(error); }

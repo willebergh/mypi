@@ -4,57 +4,68 @@ FaceTime is an alternative audio/call mode for the **same Pi session**. History,
 
 ## One-time setup
 
-1. Build the local Rust and Swift helpers directly, following [`/skill:setup`](../../../.pi/skills/setup/SKILL.md) and its [native Talk](../../../.pi/skills/setup/references/native-talk.md) and [FaceTime app](../../../.pi/skills/setup/references/facetime-app.md) references for prerequisites and exact build/signing steps. Stop active calls and quit the helper before rebuilding. Existing native Talk builds already supporting protocol 6 need no Rust source change for audio gating; the updated Swift service is required for instance/sequence and allowlist metadata.
+1. Build the protocol-7 Rust and Swift helpers directly, following [`/skill:setup`](../../../.pi/skills/setup/SKILL.md) and its [native Talk](../../../.pi/skills/setup/references/native-talk.md) and [FaceTime app](../../../.pi/skills/setup/references/facetime-app.md) references for prerequisites and exact build/signing steps. Stop active calls and quit the helper before rebuilding. A protocol-6 helper is intentionally rejected because it cannot enforce UID-only hidden routing.
 
-2. In Pi, `/reload` then `/talk devices virtual` creates/migrates the shared **`~/.pi/agent/talk.json`**. Configure its `facetime` section as described in [configuration](../CONFIG.md): exact caller/recipient allowlists, owner-only permissions, and Accessibility access. Swift reads its `facetime` policy; there is no persisted auto-answer switch. Pi prepares Talk before requesting Answer. Keep FaceTime open in the logged-in GUI session. Do not run as root.
+2. Build and install the GPLv3 Pi Talk driver as described in [the driver guide](../macos-audio-driver/README.md). Close audio clients before installation; the installer places `PiTalk.driver` under `/Library/Audio/Plug-Ins/HAL` and restarts Core Audio. Normal device menus should then show one visible **Pi Talk** device and must not show **Pi Talk Internal**.
 
-3. Install and open the independent app:
+3. In Pi, `/reload` then `/talk devices diagnostics` creates/migrates the shared **`~/.pi/agent/talk.json`** and verifies the hardcoded virtual route. Configure its `facetime` section as described in [configuration](../CONFIG.md): exact caller/recipient allowlists, owner-only permissions, and Accessibility access. Swift reads its `facetime` policy; there is no persisted auto-answer switch. Pi prepares Talk before requesting Answer. Keep FaceTime open in the logged-in GUI session. Do not run as root.
+
+4. Install and open the independent app:
 
    Follow the manual build/install steps in [APP.md](APP.md), then open the installed app through LaunchServices:
 
    ```sh
-   open "$HOME/Applications/Pi FaceTime Bridge.app"
+   open "$HOME/Applications/Pi Talk.app"
    ```
 
-   Use the app menu's explicit Accessibility controls and verify that macOS grants access to **Pi FaceTime Bridge**, not CMUX. Stop the old CLI service before opening the app; never run both. See [APP.md](APP.md) for local signing, rebuilds, and attribution testing. Pi still does not auto-launch the app or install a LaunchAgent. The developer CLI (`swift run facetime-observer watch`) remains available, but may require Accessibility on its terminal and its diagnostic stdout should be drained.
+   Use the app menu's explicit Accessibility controls and verify that macOS grants access to **Pi Talk**, not CMUX. Stop the old CLI service before opening the app; never run both. See [APP.md](APP.md) for local signing, rebuilds, and attribution testing. Pi still does not auto-launch the app or install a LaunchAgent. The optional developer CLI (`swift run --package-path extensions/talk/facetime facetime-observer watch`) remains available, but may require Accessibility on its terminal and must have its private diagnostic stdout drained.
 
-4. In Pi, verify/select the profiles (physical is optional):
+5. In Pi, optionally select physical devices and verify the fixed virtual route:
 
    ```text
-   /talk devices physical
-   /talk devices virtual
+   /talk devices
+   /talk devices diagnostics
    ```
 
-   `physical` is for regular Talk. Existing v1 selections migrate to that profile. `virtual` requires an explicit microphone and output—no system-default fallback. Both profiles live under `audio` in shared `~/.pi/agent/talk.json` (under `getAgentDir()` for custom directories), using CoreAudio IDs and display names. Editing/resetting audio preserves the same file's FaceTime policy. A profile is a generic audio pair, not a FaceTime-specific object; future service adapters can reuse it.
+   Swift requires shared schema **version 2**. `audio.physical` keeps the optional microphone/speaker device pair for regular Talk. `audio.virtual` contains exactly `visibleUid: "io.github.willebergh.pitalk.audio.visible"` and `internalUid: "io.github.willebergh.pitalk.audio.internal"`; missing, altered, or additional fields are rejected. The shared file remains `~/.pi/agent/talk.json` (under `getAgentDir()` for custom directories).
 
-   Example mapping:
+   FaceTime uses the driver's visible **Pi Talk** device for both microphone and output; Talk uses the internal endpoint. There is no inverse device pair or physical-device fallback. The Pi Talk driver must be installed.
 
-   | Application | Microphone | Output |
-   |---|---|---|
-   | Talk virtual profile | Agent Input | Agent Output |
-   | FaceTime (inverse, applied by Swift) | Agent Output | Agent Input |
-
-   FaceTime selection uses the saved friendly names, which must match its Video menu entries exactly. On `/talk facetime` enable, Pi requires the same config path, asks the idle Swift service to reload/apply the inverse pair, then verifies both menu marks before standby. It does not issue a duplicate selection. For custom agent directories, use the app's **Choose Talk config…** menu and Stop/Start to select that exact file. Settings changes apply at the next mode start, never mid-call.
+   On `/talk facetime` enable, Pi requires the same config path, asks the idle Swift service to reload/apply **Pi Talk** in both directions, then verifies both routes before standby. Normally this requires both exact FaceTime menu marks. When FaceTime omits its entire Microphone section because Pi Talk is the sole/default input, the bridge instead requires Core Audio's current default-input UID to exactly equal the fixed Pi Talk visible UID and reports that verified route to Pi. A present selector or any UID mismatch still uses/fails the normal strict menu path. Pi does not issue a duplicate selection. For custom agent directories, use the app's **Choose Talk config…** menu and Stop/Start to select that exact file. Settings changes apply at the next mode start, never mid-call.
 
 ## Commands and tools
 
 ```text
 /talk                         Regular Talk with physical devices
+/talk start virtual           Direct virtual Talk; call app is managed manually
 /talk facetime                FaceTime standby; no GPT-Live connection while idle
 /talk facetime status
-/talk facetime call PHONE_OR_EMAIL [--reason CALL_PURPOSE]
+/talk facetime call [--reason CALL_PURPOSE]
 /talk facetime answer
 /talk facetime hangup          End owned call; remain in standby
+/talk facetime share DISPLAY   Share one entire display by its exact picker name
+/talk facetime stop-sharing    Stop sharing without ending the call
 /talk stop                    End owned call/voice; leave standby
 /talk status
+/talk devices                 Select physical microphone/output directly
+/talk devices diagnostics     Verify the hardcoded virtual route
 /talk devices physical reset  Reset physical profile only
-/talk devices virtual reset   Clear virtual selections (must reconfigure to use it)
-/talk devices reset           Reset both audio profiles; preserve call policy
+/talk devices reset           Reset physical profile only; preserve call policy
 ```
 
-`/talk devices` opens a **Physical / Virtual** profile picker first, followed by microphone and output pickers. Explicit `/talk devices physical` and `/talk devices virtual` shortcuts skip the first choice. Changes never rewire an active call; restart the mode to apply changes. Regular Talk and FaceTime mode cannot run together.
+`/talk devices` opens the physical microphone and output pickers directly. Virtual UIDs are hardcoded schema values and never appear in a picker; diagnostics are explicit. Changes never rewire an active call; restart the mode to apply changes. Regular Talk and FaceTime mode cannot run together.
 
-Only FaceTime mode exposes `facetime_status`, `facetime_call`, `facetime_answer`, and `facetime_hangup`. On leaving the mode they are hidden/deactivated; stale executions are rejected. Call tools do not change allowlists or audio profiles. `facetime_call` takes `to` and a required concise `reason` (known result/update/question, at most 300 UTF-8 bytes). That purpose stays in Talk context, not in the Swift dial command. Terminal calls can supply it with `--reason`; without it, no agenda is invented. Outgoing calls require a fresh explicit request or an already-authorized callback; merely enabling standby is not authorization to dial.
+Only FaceTime mode exposes `facetime_status`, `facetime_call`, `facetime_answer`, and `facetime_hangup`. On leaving the mode they are hidden/deactivated; stale executions are rejected. Call tools do not change allowlists or audio profiles. FaceTime mode requires exactly one owner in `allowedRecipients`; `facetime_call` accepts only a required concise `reason` (known result/update/question, at most 300 UTF-8 bytes), and Pi resolves the owner locally. The model cannot select or override the recipient. That purpose stays in Talk context, not in the Swift dial command. Terminal calls can supply it with `--reason`; without it, no agenda is invented. Outgoing calls require a fresh explicit request or an already-authorized callback; merely enabling standby is not authorization to dial.
+
+## Manual entire-screen sharing
+
+`facetime_share_screen` takes the exact `display` name shown by macOS (for example, `LS32A600U`); `facetime_stop_sharing` takes no arguments. Both require an explicit user request and the current Pi-owned, verified connected call with audio enabled. They are unavailable in standby or outside FaceTime mode. There is no automatic sharing, fuzzy display matching, window selection, or remote-control granting.
+
+The bridge opens Control Center's Audio and Video Controls, verifies the FaceTime panel's caller identity, opens its screen picker, and presses only the unique **Share DISPLAY** button. It verifies **Currently Sharing** and turns **Allow Control** off if macOS enabled it. **Important:** macOS can default Allow Control to on as sharing starts; it is disabled immediately afterward and success is reported only after off is observed. This is not a zero-time remote-control exclusion guarantee. If off cannot be verified, the bridge attempts to stop that share and reports failure. Do not use automated sharing if even that brief default-on interval is unacceptable. No remote-control request is accepted by this integration.
+
+Sharing operations carry the expected call ID, are serialized, and recheck the call before delayed UI actions. They allow up to 12 seconds for picker/panel/start verification plus 3 seconds for safety cleanup; sharing IPC uses a separate 20-second deadline (ordinary commands remain at five seconds). Timeout errors include the phase and bounded control-state diagnostics, not UI trees. They never replay clicks after timeout/disconnect. The menu/picker can move focus; user interaction, multiple matching displays, localization, and OS UI changes can cause an unconfirmed result. Check FaceTime manually after errors—do not retry automatically. A successful start verifies the picker action and local sharing controls, not remote receipt of pixels or ongoing isolation from later manual changes. Stop/quit of the bridge does not promise to stop an already active share; use the sharing stop tool or FaceTime controls first.
+
+Validation: the macOS 26.6 controls and their active/off values were inspected during manual entire-display sharing. The automated controller has synthetic sequencing, stale-call, duplicate-target, timeout, safety-stop, and remote-control-off tests; an end-to-end automated live start/stop remains to be validated. For a live check, use a harmless display, verify it is received remotely, confirm Allow Control is off, stop sharing, and verify both the local indicator and remote view stop. No sharing is started merely by installing, reloading, or enabling standby.
 
 ## Call lifecycle
 

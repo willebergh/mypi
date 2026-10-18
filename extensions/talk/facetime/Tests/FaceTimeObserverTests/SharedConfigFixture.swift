@@ -1,19 +1,19 @@
 import Foundation
 @testable import FaceTimeObserver
 
-// Synthetic shared-schema fixture; no legacy fields or real device identities.
+// Shared v2 schema: synthetic physical devices and the fixed Pi Talk UIDs.
 enum SharedConfigFixture {
     static let json = #"""
     {
-      "version": 1,
+      "version": 2,
       "audio": {
         "physical": {
           "microphone": {"id":"physical-mic", "name":"Physical microphone"},
           "speaker": {"id":"physical-speaker", "name":"Physical speaker"}
         },
         "virtual": {
-          "microphone": {"id":"virtual-mic", "name":"Pi virtual microphone"},
-          "speaker": {"id":"virtual-speaker", "name":"Pi virtual speaker"}
+          "visibleUid": "io.github.willebergh.pitalk.audio.visible",
+          "internalUid": "io.github.willebergh.pitalk.audio.internal"
         }
       },
       "facetime": {

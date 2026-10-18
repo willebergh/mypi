@@ -1,6 +1,6 @@
 # Local FaceTime bridge app
 
-The Swift service can run as **Pi FaceTime Bridge.app**, hosted independently of Terminal/CMUX. Talk still connects through the same private Unix socket; no Pi code, AI credentials, or audio transport moves into the app.
+The Swift service can run as **Pi Talk.app**, hosted independently of Terminal/CMUX. Talk still connects through the same private Unix socket; no Pi code, AI credentials, or audio transport moves into the app.
 
 ## Build and install
 
@@ -15,7 +15,7 @@ Requirements: Swift 6/Xcode command-line tools and the macOS SDK. No paid Apple 
 Locations:
 
 - Staged bundle: a temporary directory under `~/Applications`, verified before installation
-- Installed bundle: `~/Applications/Pi FaceTime Bridge.app`
+- Installed bundle: `~/Applications/Pi Talk.app`
 - Stable bundle ID: `dev.mypi.facetime-bridge`
 
 Stop active calls and quit the old bridge app/CLI before rebuilding. The setup workflow checks mapped executables with `lsof` and refuses replacement rather than stopping processes. It signs and verifies a temporary bundle before replacing an existing known bundle, preserving the old app on signing failure. Do not run two service instances.
@@ -26,11 +26,11 @@ Stop active calls and quit the old bridge app/CLI before rebuilding. The setup w
 2. Open the **installed app through LaunchServices**, not its executable:
 
    ```sh
-   open "$HOME/Applications/Pi FaceTime Bridge.app"
+   open "$HOME/Applications/Pi Talk.app"
    ```
 
 3. Use its menu-bar controls to request Accessibility access/open the Accessibility settings pane.
-4. In **System Settings → Privacy & Security → Accessibility**, check that the entry is **Pi FaceTime Bridge**, then grant it access manually. Follow macOS's quit/reopen instruction if shown, and use Start/Retry after permission is available.
+4. In **System Settings → Privacy & Security → Accessibility**, check that the entry is **Pi Talk**, then grant it access manually. Follow macOS's quit/reopen instruction if shown, and use Start/Retry after permission is available.
 5. Verify that the app reports a running service. Then enable `/talk facetime` in Pi as before.
 
 The app does not prompt for Accessibility merely because it was built/installed, and it does not need microphone or screen-recording access. Talk's separate native audio helper still needs its normal microphone permission. App launch is manual for now; automatic startup from `/talk facetime` remains deferred.
@@ -41,7 +41,7 @@ Accessibility itself is broad: macOS does not scope the grant to FaceTime alone.
 
 ## Configuration and lifecycle
 
-The app and Pi share owner-only **`~/.pi/agent/talk.json`**; the socket remains `~/.local/share/pi-facetime/control.sock`. See the [configuration reference](../CONFIG.md) for schema and safe migration from the two old files. Swift derives FaceTime's microphone/output from the inverse `audio.virtual` pair and automatically selects them; there are no separate device or auto-answer settings. Pi still prepares/gates audio before requesting Answer, while Swift enforces allowlists.
+The app and Pi share owner-only **`~/.pi/agent/talk.json`**; the socket remains `~/.local/share/pi-facetime/control.sock`. See the [configuration reference](../CONFIG.md) for schema and safe migration from the two old files. Swift requires shared schema v2 with the fixed `audio.virtual.visibleUid`/`internalUid` constants and selects **Pi Talk** for both FaceTime microphone and output; there are no separate device or auto-answer settings. Pi still prepares/gates audio before requesting Answer, while Swift enforces allowlists.
 
 Use **Choose Talk config…** for a custom Pi agent directory, then Stop/Start (or Retry). The GUI may not inherit terminal environment variables. macOS preferences remember only the selected file location, never another policy/audio copy. Pi requires the bridge's reported config path to match its own. Ordinary edits to that file apply when the idle service reloads on `/talk facetime` enable; no app restart is needed. An active call is never rewired by config reload.
 

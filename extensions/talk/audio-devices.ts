@@ -1,18 +1,13 @@
 import type { ExtensionContext } from "@earendil-works/pi-coding-agent";
-import { loadTalkConfig, updateTalkConfig, validateTalkDeviceSettings, type AudioProfile, type TalkAudioProfiles, type TalkDeviceSettings } from "./config.ts";
+import { loadTalkConfig, updateTalkConfig, validateTalkDeviceSettings, type TalkAudioProfiles, type TalkDeviceSettings } from "./config.ts";
+import { MANAGED_VIRTUAL_AUDIO } from "./virtual-audio.ts";
 
-export type { AudioProfile, TalkAudioProfiles, TalkDeviceSettings } from "./config.ts";
+export type { TalkAudioProfiles, TalkDeviceSettings } from "./config.ts";
+export { validateManagedVirtualAudio } from "./virtual-audio.ts";
 export { resetTalkAudioProfiles } from "./config.ts";
 
 type Device = { id: string; name: string; is_default: boolean };
 type Devices = { inputs: Device[]; outputs: Device[] };
-
-export function requireVirtualAudio(settings: TalkDeviceSettings): void {
-  const normalized = validateTalkDeviceSettings(settings);
-  if (!normalized.microphone || !normalized.speaker) {
-    throw new Error("Virtual audio for FaceTime requires an explicit microphone and output; system defaults are not supported.");
-  }
-}
 
 export async function loadTalkAudioProfiles(path?: string): Promise<TalkAudioProfiles> {
   return (await loadTalkConfig(path)).audio;
@@ -22,14 +17,17 @@ export async function loadTalkDeviceSettings(path?: string): Promise<TalkDeviceS
   return (await loadTalkAudioProfiles(path)).physical;
 }
 
+/** Save only physical devices. Virtual routing is managed, never user-selected. */
 export async function saveTalkDeviceSettings(settings: TalkDeviceSettings, path?: string): Promise<void> {
-  await saveTalkAudioProfile("physical", settings, path);
+  const normalized = validateTalkDeviceSettings(settings);
+  await updateTalkConfig((config) => { config.audio.physical = normalized; }, path);
 }
 
-export async function saveTalkAudioProfile(profile: AudioProfile, settings: TalkDeviceSettings, path?: string): Promise<void> {
-  if (profile !== "physical" && profile !== "virtual") throw new Error(`Unknown talk audio profile: ${String(profile)}`);
-  const normalized = validateTalkDeviceSettings(settings);
-  await updateTalkConfig((config) => { config.audio[profile] = normalized; }, path);
+/** Restore the managed identity without changing physical selections or calling policy.
+ * Invalid canonical configs still require explicit repair, just like audio reset.
+ */
+export async function restoreTalkVirtualAudio(path?: string): Promise<void> {
+  await updateTalkConfig((config) => { config.audio.virtual = { ...MANAGED_VIRTUAL_AUDIO }; }, path);
 }
 
 function pickerOptions(devices: Device[], current: TalkDeviceSettings["microphone"]): string[] {
@@ -50,7 +48,7 @@ async function pick(ctx: Pick<ExtensionContext, "hasUI" | "ui">, title: string, 
   return index >= 0 ? devices[index] : undefined;
 }
 
-export async function chooseTalkDevices(
+export async function chooseTalkPhysicalDevices(
   ctx: Pick<ExtensionContext, "hasUI" | "ui">,
   current: TalkDeviceSettings,
   devices: Devices,

@@ -99,7 +99,30 @@ impl Converter {
     }
 }
 
+/// Physical routes need echo cancellation; the virtual mix-minus route has no
+/// acoustic echo path. Keep noise suppression and adaptive gain on both routes.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) enum ProcessingPolicy {
+    Physical,
+    Virtual,
+}
+
+impl ProcessingPolicy {
+    fn config(self) -> sonora::Config {
+        sonora::Config {
+            echo_canceller: (self == Self::Physical).then(EchoCanceller::default),
+            noise_suppression: Some(NoiseSuppression::default()),
+            gain_controller2: Some(GainController2 {
+                adaptive_digital: Some(AdaptiveDigital::default()),
+                ..Default::default()
+            }),
+            ..Default::default()
+        }
+    }
+}
+
 pub(crate) struct Processor {
+    policy: ProcessingPolicy,
     capture: Converter,
     render: Converter,
     apm: AudioProcessing,
@@ -111,20 +134,13 @@ pub(crate) struct Processor {
 }
 
 impl Processor {
-    pub(crate) fn new(input_rate: u32, output_rate: u32) -> Result<Self> {
+    pub(crate) fn new(input_rate: u32, output_rate: u32, policy: ProcessingPolicy) -> Result<Self> {
         Ok(Self {
+            policy,
             capture: Converter::new(input_rate)?,
             render: Converter::new(output_rate)?,
             apm: AudioProcessing::builder()
-                .config(sonora::Config {
-                    echo_canceller: Some(EchoCanceller::default()),
-                    noise_suppression: Some(NoiseSuppression::default()),
-                    gain_controller2: Some(GainController2 {
-                        adaptive_digital: Some(AdaptiveDigital::default()),
-                        ..Default::default()
-                    }),
-                    ..Default::default()
-                })
+                .config(policy.config())
                 .capture_config(StreamConfig::new(48_000, 1))
                 .render_config(StreamConfig::new(48_000, 1))
                 .build(),
@@ -138,7 +154,7 @@ impl Processor {
     }
 
     pub(crate) fn reset(&mut self) -> Result<()> {
-        *self = Self::new(self.capture.rate, self.render.rate)?;
+        *self = Self::new(self.capture.rate, self.render.rate, self.policy)?;
         Ok(())
     }
 
@@ -151,6 +167,9 @@ impl Processor {
     }
 
     pub(crate) fn render(&mut self, frame: &Frame) -> Result<()> {
+        if self.policy == ProcessingPolicy::Virtual {
+            return Ok(());
+        }
         self.render.push(frame)?;
         while let Some((at, input)) = self.render.next() {
             let mut output = [0.0; BLOCK];
@@ -191,13 +210,15 @@ impl Processor {
             if capture_age > MAX_PROCESSING_DELAY {
                 return Err(PROCESSING_LATE);
             }
-            let delay = (capture_age.as_millis() as i64 + self.render_delay).max(0);
-            if delay > MAX_PROCESSING_DELAY.as_millis() as i64 {
-                return Err(PROCESSING_LATE);
+            if self.policy == ProcessingPolicy::Physical {
+                let delay = (capture_age.as_millis() as i64 + self.render_delay).max(0);
+                if delay > MAX_PROCESSING_DELAY.as_millis() as i64 {
+                    return Err(PROCESSING_LATE);
+                }
+                self.apm
+                    .set_stream_delay_ms(delay as i32)
+                    .map_err(|_| "invalid voice echo delay")?;
             }
-            self.apm
-                .set_stream_delay_ms(delay as i32)
-                .map_err(|_| "invalid voice echo delay")?;
             let mut output = [0.0; BLOCK];
             self.apm
                 .process_capture_f32(&[&input], &mut [&mut output])
@@ -232,5 +253,49 @@ impl Processor {
         data.truncate(len);
         self.pending.clear();
         Ok(EncodedAudio { data, at: self.at })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn policies_keep_noise_and_gain_but_only_physical_has_aec() {
+        for policy in [ProcessingPolicy::Physical, ProcessingPolicy::Virtual] {
+            let config = policy.config();
+            assert_eq!(
+                config.echo_canceller.is_some(),
+                policy == ProcessingPolicy::Physical
+            );
+            assert!(config.noise_suppression.is_some());
+            assert!(config.gain_controller2.unwrap().adaptive_digital.is_some());
+            let mut processor = Processor::new(48_000, 48_000, policy).unwrap();
+            processor.reset_render();
+            processor.reset().unwrap();
+            assert_eq!(processor.policy, policy);
+            assert_eq!(
+                processor.policy.config().echo_canceller.is_some(),
+                policy == ProcessingPolicy::Physical
+            );
+        }
+    }
+
+    #[test]
+    fn virtual_render_is_ignored_and_capture_gap_reset_keeps_policy() {
+        let mut processor = Processor::new(48_000, 48_000, ProcessingPolicy::Virtual).unwrap();
+        let mut frame = Frame {
+            samples: [0.0; super::super::buffers::BLOCK],
+            len: super::super::buffers::BLOCK,
+            at: Instant::now(),
+            generation: 0,
+        };
+        processor.render(&frame).unwrap();
+        assert!(processor.render.end.is_none());
+        processor.capture(&frame, || frame.at).unwrap();
+        frame.at += Duration::from_millis(100);
+        processor.capture(&frame, || frame.at).unwrap();
+        assert_eq!(processor.policy, ProcessingPolicy::Virtual);
+        assert!(processor.policy.config().echo_canceller.is_none());
     }
 }

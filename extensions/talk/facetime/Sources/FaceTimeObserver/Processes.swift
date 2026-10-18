@@ -34,7 +34,7 @@ struct TargetFilter {
 
         // These are discovery candidates, not assumptions about which process owns call UI.
         let haystack = "\(name) \(bundle)".lowercased()
-        return ["facetime", "notificationcenter", "notification center", "call", "avconferenced"]
+        return ["facetime", "notificationcenter", "notification center", "call", "avconferenced", "com.apple.screencaptureui", "com.apple.controlcenter"]
             .contains(where: haystack.contains)
     }
 }
@@ -61,7 +61,7 @@ func allInterestingProcesses() -> [[String: Any]] {
             bundleIdentifier: app.bundleIdentifier
         )
     }
-    let terms = ["facetime", "notification", "call", "avconference"]
+    let terms = ["facetime", "notification", "call", "avconference", "com.apple.screencaptureui", "com.apple.controlcenter"]
     return apps.filter { target in
         let value = "\(target.name) \(target.bundleIdentifier ?? "")".lowercased()
         return terms.contains(where: value.contains)

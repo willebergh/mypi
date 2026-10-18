@@ -15,8 +15,8 @@ use super::{
 };
 use crate::audio::{self, SpeakerState};
 use crate::codex_audio::buffers::Frame;
-use crate::codex_audio::processing::{self, EncodedAudio, Processor};
-use crate::protocol::Event;
+use crate::codex_audio::processing::{self, EncodedAudio, ProcessingPolicy, Processor};
+use crate::protocol::{ErrorCode, Event};
 use crate::resample::LinearResampler;
 
 /// Bridge input older than this is stale: it is trimmed instead of being sent late.
@@ -198,6 +198,7 @@ fn lock_bridge(queue: &Mutex<BridgeQueue>) -> std::sync::MutexGuard<'_, BridgeQu
 }
 
 pub(crate) struct DeviceEncoder {
+    pub(crate) policy: ProcessingPolicy,
     pub(crate) frames: Arc<ArrayQueue<Frame>>,
     pub(crate) input_rate: u32,
     pub(crate) generation: Arc<AtomicU64>,
@@ -257,6 +258,7 @@ pub(crate) fn spawn_device_encoder(
     events: mpsc::Sender<Event>,
 ) -> (InputControl, tokio::task::JoinHandle<()>) {
     let DeviceEncoder {
+        policy,
         frames,
         input_rate,
         generation,
@@ -274,7 +276,7 @@ pub(crate) fn spawn_device_encoder(
         bridge: None,
     };
     let task = tokio::spawn(async move {
-        let mut processor = match Processor::new(input_rate, output_rate) {
+        let mut processor = match Processor::new(input_rate, output_rate, policy) {
             Ok(processor) => processor,
             Err(error) => {
                 report_terminal_error(&events, error).await;
@@ -304,7 +306,11 @@ pub(crate) fn spawn_device_encoder(
                 }
                 _ = ticker.tick() => {
                     if failed.load(Ordering::Acquire) {
-                        report_terminal_error(&events, "microphone stream failed").await;
+                        super::report_coded_terminal_error(
+                            &events,
+                            "microphone stream failed; check the audio device and restart the call",
+                            (policy == ProcessingPolicy::Virtual).then_some(ErrorCode::DeviceLost),
+                        ).await;
                         return;
                     }
                     let active_speaker = speaker.get();

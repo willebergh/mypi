@@ -26,6 +26,7 @@ export interface FaceTimeClient {
 export interface FaceTimeClientOptions extends FaceTimeClientCallbacks {
   socketPath?: string;
   requestTimeoutMs?: number;
+  sharingRequestTimeoutMs?: number;
   snapshotTimeoutMs?: number;
   reconnectMinMs?: number;
   reconnectMaxMs?: number;
@@ -67,10 +68,11 @@ export function createFaceTimeClient(options: FaceTimeClientOptions): FaceTimeCl
   const lineLimit = options.maxLineBytes ?? 256 * 1024;
   const pendingLimit = options.maxPending ?? 64;
   const requestMs = options.requestTimeoutMs ?? 5_000;
+  const sharingRequestMs = options.sharingRequestTimeoutMs ?? 20_000;
   const snapshotMs = options.snapshotTimeoutMs ?? 5_000;
   const minBackoff = options.reconnectMinMs ?? 200;
   const maxBackoff = options.reconnectMaxMs ?? 5_000;
-  for (const n of [lineLimit, pendingLimit, requestMs, snapshotMs, minBackoff, maxBackoff]) {
+  for (const n of [lineLimit, pendingLimit, requestMs, sharingRequestMs, snapshotMs, minBackoff, maxBackoff]) {
     if (!Number.isSafeInteger(n) || n <= 0) throw new Error("Invalid FaceTime transport limit");
   }
   if (minBackoff > maxBackoff) throw new Error("Invalid FaceTime reconnect bounds");
@@ -201,7 +203,7 @@ export function createFaceTimeClient(options: FaceTimeClientOptions): FaceTimeCl
         const timer = setTimeout(() => {
           pending.delete(id);
           reject(new Error(`FaceTime ${command} timed out; outcome unknown, not retried`));
-        }, requestMs);
+        }, command === "screen.share" || command === "screen.stop" ? sharingRequestMs : requestMs);
         pending.set(id, { resolve, reject, timer });
         try {
           current.write(line, (error) => {

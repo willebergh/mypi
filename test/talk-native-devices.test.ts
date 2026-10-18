@@ -42,7 +42,7 @@ test("discovery lists only after ready, sanitizes labels, and reaps before resol
   const h = discovery();
   h.child.autoClose = false;
   assert.deepEqual(h.child.commands, []);
-  const bytes = Buffer.from(`${JSON.stringify({ type: "ready", version: 6 })}\n${JSON.stringify({
+  const bytes = Buffer.from(`${JSON.stringify({ type: "ready", version: 7 })}\n${JSON.stringify({
     ...deviceList, outputs: [{ ...device, name: "Speaker\u001b[31m\u009b\r\n\t\u202e\u2028\u0007" }],
   })}\n`);
   // Both combined events and split UTF-8 must frame correctly.
@@ -68,7 +68,7 @@ test("discovery accepts empty lists and maximum per-direction count/UTF-8 bounds
     id: `${index}`.padEnd(512, "x"), name: "é".repeat(256), is_default: false,
   }))]) {
     const h = discovery();
-    h.child.event({ type: "ready", version: 6 });
+    h.child.event({ type: "ready", version: 7 });
     h.child.event({ type: "devices", inputs: entries, outputs: entries });
     assert.deepEqual(await h.setup, { inputs: entries, outputs: entries });
     assert.deepEqual(h.child.commands, [{ type: "list_devices" }, { type: "shutdown" }]);
@@ -77,7 +77,7 @@ test("discovery accepts empty lists and maximum per-direction count/UTF-8 bounds
 
 test("discovery rejects malformed ordering, fields, counts, byte limits and unsafe IDs with redacted errors", async () => {
   const malformed: unknown[] = [
-    null, [], {}, { type: "ready", version: 6 }, { type: "offer", sdp: "v=0\nsecret" },
+    null, [], {}, { type: "ready", version: 7 }, { type: "offer", sdp: "v=0\nsecret" },
     { ...deviceList, inputs: null }, { ...deviceList, outputs: {} },
     { ...deviceList, inputs: Array(129).fill(device) }, { ...deviceList, outputs: Array(129).fill(device) },
     ...[null, [], {}, { ...device, id: 1 }, { ...device, id: "" },
@@ -91,7 +91,7 @@ test("discovery rejects malformed ordering, fields, counts, byte limits and unsa
   ];
   for (const event of malformed) {
     const h = discovery();
-    h.child.event({ type: "ready", version: 6 });
+    h.child.event({ type: "ready", version: 7 });
     h.child.event(event);
     await assert.rejects(h.setup, (error: Error) => {
       assert.doesNotMatch(error.message, /secret|sk-key|v=0|xxxx|é/);
@@ -122,7 +122,7 @@ test("discovery bounds protocol lines before parsing and redacts stream/process 
     (c: FakeChild) => c.emit("close", 1, null),
   ]) {
     const h = discovery();
-    h.child.event({ type: "ready", version: 6 });
+    h.child.event({ type: "ready", version: 7 });
     h.child.stderr.write("secret stderr sk-key v=0\n".repeat(50_000));
     action(h.child);
     await assert.rejects(h.setup, (error: Error) => {
@@ -144,7 +144,7 @@ test("discovery has bounded startup/list deadlines and cleans up", async (t) => 
     assert.deepEqual(startup.child.commands, [{ type: "shutdown" }]);
     const h = discovery();
     t.mock.timers.tick(4_999);
-    h.child.event({ type: "ready", version: 6 });
+    h.child.event({ type: "ready", version: 7 });
     t.mock.timers.tick(4_999);
     assert.deepEqual(h.child.commands, [{ type: "list_devices" }]);
     t.mock.timers.tick(1);
@@ -161,7 +161,7 @@ test("discovery aborts before ready or during listing and waits for TERM/KILL re
     for (const ready of [false, true]) {
       const h = discovery();
       h.child.autoClose = false;
-      if (ready) h.child.event({ type: "ready", version: 6 });
+      if (ready) h.child.event({ type: "ready", version: 7 });
       let settled = false;
       void h.setup.then(() => { settled = true; }, () => { settled = true; });
       h.controller.abort();
@@ -215,7 +215,7 @@ test("discovery uses the same binary/pipes/environment allowlist, never credenti
       return child;
     }) as unknown as typeof spawn,
   });
-  child.event({ type: "ready", version: 6 });
+  child.event({ type: "ready", version: 7 });
   child.event(deviceList);
   await setup;
   assert.deepEqual(options?.stdio, ["pipe", "pipe", "pipe"]);

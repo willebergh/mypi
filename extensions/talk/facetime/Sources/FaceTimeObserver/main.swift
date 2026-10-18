@@ -120,6 +120,9 @@ final class WatchService: @unchecked Sendable {
     private let emitStdout: Bool
     var isRunning: Bool { run?.isRunning == true }
     private var callTracker = CallStateTracker()
+    private var screenSharing: ScreenSharingController?
+    private var videoLayout: VideoLayoutController?
+    private var videoLayoutObserver = VideoLayoutObserver()
     private var autoAnswerAttemptedCallID: String?
     private var confirmationAttemptedCallID: String?
     private var routedFaceTimePID: pid_t?
@@ -140,6 +143,16 @@ final class WatchService: @unchecked Sendable {
         guard !isRunning else { return }
         let run = ServiceRun()
         self.run = run
+        screenSharing = ScreenSharingController(ax: ControlCenterScreenSharingAX(), currentCall: { [weak self] in
+            guard let self else { return ScreenSharingCall(id: nil, phase: "idle", verified: false, identity: nil, present: false) }
+            // Read only the current call banner. Full reconcile() can answer,
+            // route, or enforce timeouts and must not be used as a UI guard.
+            let targets = self.controlTargets().filter { $0.bundleIdentifier == "com.apple.notificationcenterui" }
+            let freshReader = AXTreeReader(maxDepth: 12, maxNodes: 2_000)
+            let fresh = CallObservation.extract(from: targets.map { freshReader.tree(for: $0, keywords: []) })
+            return screenSharingCall(tracker: self.callTracker, fresh: fresh)
+        }, isRunning: { run.isRunning })
+        videoLayout = VideoLayoutController(isRunning: { run.isRunning })
         let configuration = options.configurationJSON
         let socket = SocketServer(path: options.socketPath, initial: { [weak self] in
             guard run.isRunning, let self else {
@@ -170,6 +183,11 @@ final class WatchService: @unchecked Sendable {
     func stop() {
         run?.stop()
         run = nil
+        screenSharing?.invalidate()
+        screenSharing = nil
+        videoLayout?.invalidate()
+        videoLayout = nil
+        videoLayoutObserver = VideoLayoutObserver()
         timer?.invalidate()
         timer = nil
         for observer in observers.values { observer.stop() }
@@ -223,6 +241,7 @@ final class WatchService: @unchecked Sendable {
         }
 
         let currentSnapshots = Array(snapshots.values)
+        if let event = videoLayoutObserver.update(VideoLayout.extract(currentSnapshots)) { emit(event) }
         handleCallConfirmation(CallConfirmation.extract(from: currentSnapshots))
         let observation = CallObservation.extract(from: currentSnapshots)
         if pendingRecipient != nil, observation.present, let observedIdentity = observation.identity,
@@ -264,6 +283,7 @@ final class WatchService: @unchecked Sendable {
             "timestamp": timestamp(),
             "permission": permissionDiagnostic(),
             "call": callTracker.statusJSON,
+            "video": VideoLayout.extract(Array(snapshots.values))?.json ?? ["available": false],
             "configuration": options.configurationJSON,
             "processes": processes
         ], allowedCallers: options.allowedCallers)
@@ -296,7 +316,7 @@ final class WatchService: @unchecked Sendable {
                         }
                     })
                 // Commit policy and routes together only after successful
-                // validation and verified AX selection. Never reconcile here:
+                // validation and verified audio routing. Never reconcile here:
                 // reload cannot answer, initiate, confirm, or end a call.
                 options = candidate
                 routedFaceTimePID = controlTargets().first(where: { $0.bundleIdentifier == "com.apple.FaceTime" })?.pid
@@ -346,6 +366,36 @@ final class WatchService: @unchecked Sendable {
                 return
             }
             startOutgoingCall(recipient: recipient, id: id, reply: reply)
+        case "video.status":
+            guard Set(command.keys).isSubset(of: ["type", "command", "id"]) else {
+                reply(commandError(id: id, code: "invalid_command", message: "video.status accepts no parameters"))
+                return
+            }
+            reply(["type": "response", "id": id, "ok": true, "result": videoLayout?.status() ?? ["available": false]])
+        case "video.rotate":
+            videoLayout?.rotate(command) { result in
+                switch result {
+                case .success(let value): reply(["type": "response", "id": id, "ok": true, "result": value])
+                case .failure(let error): reply(self.commandError(id: id, code: error.code, message: error.message))
+                }
+            }
+        case "screen.share", "screen.stop", "screen.status":
+            do {
+                let request = try ScreenSharingCommand(command)
+                screenSharing?.execute(request) { result in
+                    switch result {
+                    case .success(let value):
+                        reply(["type": "response", "id": id, "ok": true, "result": value])
+                    case .failure(let error):
+                        reply(["type": "response", "id": id, "ok": false,
+                               "error": ["code": error.code, "message": error.message]])
+                    }
+                }
+            } catch let error as ScreenSharingError {
+                reply(commandError(id: id, code: error.code, message: error.message))
+            } catch {
+                reply(commandError(id: id, code: "invalid_command", message: error.localizedDescription))
+            }
         case "audio.devices":
             let result = listFaceTimeAudioDevices(targets: controlTargets())
             reply(audioResponse(id: id, result: result))
@@ -360,7 +410,7 @@ final class WatchService: @unchecked Sendable {
         case "discover":
             reply(["type": "response", "id": id, "ok": true, "result": ["processes": allInterestingProcesses()]])
         default:
-            reply(["type": "response", "id": id, "ok": false, "error": ["code": "unsupported_command", "message": "Supported commands: status, config.reload, inspect, snapshot, discover, call, answer, hangup, audio.devices, audio.select"]])
+            reply(["type": "response", "id": id, "ok": false, "error": ["code": "unsupported_command", "message": "Supported commands: status, config.reload, inspect, snapshot, discover, call, answer, hangup, audio.devices, audio.select, screen.share, screen.stop, screen.status, video.status, video.rotate"]])
         }
     }
 

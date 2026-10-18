@@ -4,7 +4,7 @@ import { EventEmitter } from "node:events";
 import { PassThrough, Writable } from "node:stream";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
-import { createNativePeer, type NativeAudioSelection, type NativePeerOptions } from "../extensions/talk/native-peer.ts";
+import { createNativePeer, diagnoseNativeVirtualAudio, type NativeAudioSelection, type NativePeerOptions } from "../extensions/talk/native-peer.ts";
 
 class FakeChild extends EventEmitter {
   stdout = new PassThrough();
@@ -54,7 +54,7 @@ function harness(child = new FakeChild(), options: NativePeerOptions = {}) {
   return {
     child, controller, errors, events, calls, setup, callbacks,
     get ready() { return ready; }, get closed() { return closed; },
-    async launch() { child.event({ type: "ready", version: 6 }); return setup; },
+    async launch() { child.event({ type: "ready", version: 7 }); return setup; },
   };
 }
 const flush = async () => { await new Promise<void>((resolve) => setImmediate(resolve)); };
@@ -203,7 +203,7 @@ for (const initial of [true, false]) {
           return original(line, callback);
         });
         if (initial) {
-          h.child.event({ type: "ready", version: 6 });
+          h.child.event({ type: "ready", version: 7 });
           await assert.rejects(h.setup);
         } else {
           const peer = await h.launch();
@@ -261,7 +261,7 @@ test("initial gate option is validated before spawn and snapshotted", async () =
   };
   const setup = createNativePeer({ onEvent() {}, onReady() {}, onError() {}, onClosed() {} }, new AbortController().signal, options);
   options.initialAudioEnabled = true;
-  child.event({ type: "ready", version: 6 });
+  child.event({ type: "ready", version: 7 });
   const peer = await setup;
   assert.deepEqual(child.commands.slice(1), [
     { type: "set_input_muted", muted: true },
@@ -450,7 +450,7 @@ test("throwing consumer callbacks cannot escape helper handlers", async () => {
   const setup = createNativePeer({ onEvent: throws, onReady: throws, onError: throws, onClosed: throws }, controller.signal, {
     platform: "darwin", binary: "/injected/helper", spawnProcess: (() => child) as unknown as typeof spawn,
   });
-  child.event({ type: "ready", version: 6 });
+  child.event({ type: "ready", version: 7 });
   const peer = await setup;
   child.event({ type: "offer", sdp: "v=0\n" });
   await peer.offer;
@@ -480,10 +480,44 @@ test("chosen device IDs pass unchanged, absent directions stay omitted, and sele
   };
   const setup = createNativePeer({ onEvent() {}, onReady() {}, onError() {}, onClosed() {} }, new AbortController().signal, options);
   options.microphone = "changed";
-  child.event({ type: "ready", version: 6 });
+  child.event({ type: "ready", version: 7 });
   const peer = await setup;
   assert.deepEqual(child.commands[0], { type: "start_v3", microphone: "chosen" });
   await peer.close();
+});
+
+test("managed virtual audio uses the distinct UID command and cannot mix with physical IDs", async () => {
+  const route = { visibleUid: "io.github.willebergh.pitalk.audio.visible", internalUid: "io.github.willebergh.pitalk.audio.internal" };
+  const h = harness(new FakeChild(), { virtual: route, initialAudioEnabled: false });
+  const peer = await h.launch();
+  assert.deepEqual(h.child.commands.slice(0, 3), [
+    { type: "start_v3_virtual", visible_uid: route.visibleUid, internal_uid: route.internalUid },
+    { type: "set_input_muted", muted: true },
+    { type: "set_speaker_suppressed", suppressed: true, epoch: 1 },
+  ]);
+  await peer.close();
+  await assert.rejects(createNativePeer(h.callbacks, new AbortController().signal, {
+    platform: "darwin", microphone: "physical", virtual: route,
+    spawnProcess: (() => new FakeChild()) as unknown as typeof spawn,
+  }), /cannot be mixed/);
+});
+
+test("virtual diagnostics are bounded, structured, and reap without creating a peer", async () => {
+  const child = new FakeChild();
+  const route = { visibleUid: "io.github.willebergh.pitalk.audio.visible", internalUid: "io.github.willebergh.pitalk.audio.internal" };
+  const setup = diagnoseNativeVirtualAudio(new AbortController().signal, route, {
+    platform: "darwin", spawnProcess: (() => child) as unknown as typeof spawn,
+  });
+  child.event({ type: "ready", version: 7 });
+  assert.deepEqual(child.commands, [{ type: "diagnose_virtual_audio", visible_uid: route.visibleUid, internal_uid: route.internalUid }]);
+  child.event({
+    type: "virtual_audio_diagnostics",
+    visible: { uid: route.visibleUid, resolved: true, audio_device_id: 41, name: "Pi Talk", nominal_sample_rate: 48_000, input_channels: 2, output_channels: 2 },
+    internal: { uid: route.internalUid, resolved: true, audio_device_id: 42, name: "Pi Talk Internal", nominal_sample_rate: 48_000, input_channels: 2, output_channels: 2 },
+    simultaneous_streams: true, issues: [],
+  });
+  assert.equal((await setup).simultaneous_streams, true);
+  assert.equal(child.commands.at(-1)?.type, "shutdown");
 });
 
 test("invalid selections reject before spawning and unavailable devices never retry defaults", async () => {
@@ -501,6 +535,11 @@ test("invalid selections reject before spawning and unavailable devices never re
       assert.equal(spawns, 0);
     }
   }
+  await assert.rejects(createNativePeer({ onEvent() {}, onReady() {}, onError() {}, onClosed() {} }, new AbortController().signal, {
+    platform: "darwin",
+    virtual: { visibleUid: "wrong", internalUid: "wrong" },
+    spawnProcess: (() => new FakeChild()) as unknown as typeof spawn,
+  }), /Invalid native virtual audio UIDs/);
   const h = harness(new FakeChild(), { microphone: "missing-input", speaker: "missing-output" });
   const peer = await h.launch();
   h.child.event({ type: "error", message: "secret selected device unavailable" });

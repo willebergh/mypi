@@ -47,7 +47,7 @@ Tests use synthetic call observations and temporary config files; they do not pl
 
 ## Standalone app (recommended)
 
-Build, sign, and install **Pi FaceTime Bridge.app** using the direct commands in [`APP.md`](APP.md) and the whole-machine [`/skill:setup`](../../../.pi/skills/setup/SKILL.md) [FaceTime app reference](../../../.pi/skills/setup/references/facetime-app.md). Open it through Finder/LaunchServices and use its menu to grant/check Accessibility. No developer account is needed; building never launches the app or requests permission. Actual TCC attribution and grants need manual verification; automatic startup from Pi remains deferred.
+Follow [`/skill:setup`](../../../.pi/skills/setup/SKILL.md) and its [FaceTime app reference](../../../.pi/skills/setup/references/facetime-app.md) to build, locally ad-hoc-sign, and install **Pi Talk.app** under `~/Applications`. Open it through Finder/LaunchServices and use its menu to grant/check Accessibility. No developer account is needed; the app build never launches or requests permission by itself. Actual TCC attribution and grants need manual verification. See [APP.md](APP.md) for the full workflow; automatic startup from Pi remains deferred.
 
 The CLI remains supported as a developer/debug option (`swift run facetime-observer watch`). Running it inside a terminal can attribute Accessibility to that terminal.
 
@@ -71,14 +71,14 @@ Run in the user's GUI session, not as root or as a system LaunchDaemon. No Launc
 
 The app and Pi read **`~/.pi/agent/talk.json`**, or `talk.json` under `PI_CODING_AGENT_DIR` when that environment is available. See the [shared configuration reference](../CONFIG.md) for the complete schema and migration/backups.
 
-In Pi, run `/talk devices virtual` to create/migrate the file and select the CoreAudio pair. Edit its `facetime` section to set `allowedCallers`, `allowedRecipients`, `recipientAliases`, `callStartTimeoutSeconds`, and `ringingTimeoutSeconds`. Keep the file owned by you with **`chmod 600 ~/.pi/agent/talk.json`**. There are no separate FaceTime device or auto-answer fields; Swift derives the inverse pair from `audio.virtual`, while Pi coordinates answering after readiness.
+Swift requires shared schema **version 2**: `audio.physical` retains the optional microphone/speaker pair, while `audio.virtual` contains exactly `visibleUid: "io.github.willebergh.pitalk.audio.visible"` and `internalUid: "io.github.willebergh.pitalk.audio.internal"`. Edit its `facetime` section to set `allowedCallers`, `allowedRecipients`, `recipientAliases`, `callStartTimeoutSeconds`, and `ringingTimeoutSeconds`. Keep the file owned by you with **`chmod 600 ~/.pi/agent/talk.json`**. There are no separate FaceTime device or auto-answer fields; Swift selects **Pi Talk** for both FaceTime microphone and output after validating the fixed virtual UIDs, while Pi coordinates answering after readiness.
 
 - Missing config uses empty allowlists, no automatic answering/routing, and 15/60-second timeouts.
 - Malformed, unsupported, non-private, or symlinked config is rejected rather than silently falling back.
 - Start reads the file; `config.reload` reloads that same selected path only while idle and applies routing. Pi requests this automatically on FaceTime mode enable. Changes do not rewire an active call.
 - `allowedCallers` matches the identity actually exposed by the incoming banner.
-- `allowedRecipients` should contain exact international phone numbers or FaceTime email addresses, not ambiguous contact names.
-- `recipientAliases` explicitly maps an outgoing address to the contact names FaceTime may display in its confirmation and call banners. These aliases authorize UI matching, not alternate outgoing dial targets.
+- `allowedRecipients` must contain exactly one owner: an exact international phone number or FaceTime email address, not an ambiguous contact name. Pi resolves this address locally; the model never selects a recipient.
+- `recipientAliases` explicitly maps that owner address to the contact names FaceTime may display in its confirmation and call banners. These aliases authorize UI matching, not alternate outgoing dial targets.
 - Matching normalizes casing, surrounding whitespace, phone punctuation, and selected bidirectional formatting characters. It does not resolve Contacts or infer country codes.
 - A contact display name match is **not** cryptographic verification of a caller's phone/email identity. Configure names only if that trust level is acceptable.
 
@@ -86,21 +86,18 @@ For a custom Pi agent directory, use the app's **Choose Talk config…** menu, t
 
 ## Audio routing with Talk
 
-The two applications use opposite ends of the virtual devices:
-
-| Application | Microphone / capture | Output / playback |
-|---|---|---|
-| Talk | Agent Input | Agent Output |
-| FaceTime | Agent Output | Agent Input |
+FaceTime uses the driver's visible **Pi Talk** device for both microphone and output. Talk uses the internal endpoint; there is no configurable inverse device pair.
 
 ```text
-Remote caller → FaceTime output → Agent Input → Talk capture
-Remote caller ← FaceTime microphone ← Agent Output ← Talk playback
+Remote caller → FaceTime output → Pi Talk → Talk capture
+Remote caller ← FaceTime microphone ← Pi Talk ← Talk playback
 ```
 
-Both applications read the same `audio.virtual` profile in `talk.json`: Talk uses its CoreAudio IDs and Swift derives FaceTime's inverse pair from its exact menu names. Neither duplicates the other's settings. Virtual device drivers and names must still be set up on each Mac.
+Both applications read `audio.virtual` in `talk.json`. Swift strictly validates the fixed visible/internal UIDs, then selects the **Pi Talk** menu entry in each direction. The Pi Talk driver must be installed on each Mac.
 
-Selection uses the hidden Accessibility children of FaceTime's **Video → Microphone / Output** menu and `AXPick`. It does **not** open the menu or change global macOS sound settings. Opening the menu programmatically previously captured desktop keyboard focus, so the service deliberately avoids that approach.
+Selection normally uses the hidden Accessibility children of FaceTime's **Video → Microphone / Output** menu and `AXPick`. It does **not** open the menu or change global macOS sound settings. Opening the menu programmatically previously captured desktop keyboard focus, so the service deliberately avoids that approach.
+
+FaceTime 36 on macOS 26.6 can omit the entire **Microphone** section when Pi Talk is the machine's sole/default input. In that narrow case only, the bridge accepts the route without `AXPick` after Core Audio independently reports the current default input's exact fixed UID as `io.github.willebergh.pitalk.audio.visible`; `audio.devices` reports that verified default as the selected Pi Talk input. A present microphone selector, a different/unresolved default UID, or any ambiguity still fails closed. The default is rechecked on every routing verification, including before outgoing calls; like menu routing, it is not an OS-wide lock against later external device changes.
 
 Configured routing is attempted when a FaceTime PID is first observed and before outgoing call initiation. A failed startup routing attempt may be retried on later reconciliations. Incoming answering does not depend on reapplying routing because FaceTime's menu may be unavailable while the incoming banner is shown. `audio.select` is an immediate selection; it does not rewrite the configuration.
 
@@ -160,13 +157,14 @@ Paste one command per line and press Enter:
 {"type":"command","id":"answer-1","command":"answer"}
 {"type":"command","id":"hangup-1","command":"hangup"}
 {"type":"command","id":"devices-1","command":"audio.devices"}
-{"type":"command","id":"audio-1","command":"audio.select","input":"Agent Output","output":"Agent Input"}
+{"type":"command","id":"screen-status-1","command":"screen.status"}
+{"type":"command","id":"audio-1","command":"audio.select","input":"Pi Talk","output":"Pi Talk"}
 {"type":"command","id":"inspect-1","command":"inspect"}
 {"type":"command","id":"snapshot-1","command":"snapshot"}
 {"type":"command","id":"discover-1","command":"discover"}
 ```
 
-Use a real configured recipient only when intentionally placing a call. Commands have side effects; do not automatically replay call/answer/hangup commands after a timeout or disconnect.
+Use a real configured recipient only when intentionally placing a call. Commands have side effects; do not automatically replay call/answer/hangup/sharing commands after a timeout or disconnect. Only after an explicit sharing request, send `screen.share` with `display` equal to an exact picker display name and `expectedCallId` equal to the verified connected call ID. `screen.stop` likewise requires that current call ID. Never guess or reuse an earlier call ID.
 
 ### Commands
 
@@ -176,6 +174,11 @@ Use a real configured recipient only when intentionally placing a call. Commands
 | `call` | Enforce recipient allowlist, apply configured routing, launch FaceTime Audio URL, and track the outgoing request. |
 | `answer` | Require an identified allowlisted incoming caller and attempt answering. |
 | `hangup` | Attempt pressing the accessible `End` control. |
+| `video.status` | Read the unique FaceTime video window, peer and local-preview/remote-view dimensions; returns `available: false` if missing or ambiguous. |
+| `video.rotate` | Require `expectedWindowId` and `expectedPeer` from `video.status`; reveal and press the local preview's exact **Rotate Camera** control once. |
+| `screen.share` | Require verified connected `expectedCallId` and exact `display`; share that entire display and verify Allow Control off. |
+| `screen.stop` | Require verified connected `expectedCallId`; stop sharing and verify local controls. |
+| `screen.status` | Read currently exposed sharing controls without opening UI; absent controls are unverified/unknown, not proof sharing stopped. |
 | `audio.devices` | Read FaceTime's input/output menu entries and selection marks. |
 | `audio.select` | Select supplied `input` and/or `output` exact device names. |
 | `inspect` | Force reconciliation and return full current AX trees. |
@@ -209,7 +212,7 @@ Semantic events include:
 - `call.ended`
 - `call.failed`
 
-Additional events include `bridge.status`, `audio.routing`, process starts/stops, and AX diagnostics. Consumers should filter for the event types they need and tolerate additional fields/types.
+Additional events include `bridge.status`, `audio.routing`, `video.layout_changed`, process starts/stops, and AX diagnostics. Consumers should filter for the event types they need and tolerate additional fields/types. `video.layout_changed` reports observed local-preview geometry, not a verified remote orientation.
 
 Example:
 
@@ -222,6 +225,36 @@ Events, initial snapshots, and responses carry `protocolVersion: 1`. Events/snap
 `verified` describes an event's local evidence; it is not a universal delivery/success/authentication guarantee. In particular, `call.answer_attempted` currently reports successful event creation/posting, not confirmation that FaceTime accepted the call. Only the advancing timer verifies connection.
 
 A client should correlate responses by `id`, parse complete newline-delimited records across arbitrary socket chunks, impose request timeouts, reconnect, and reconcile the new initial snapshot. Do not assume one socket read equals one JSON record. The server bounds input frames to 64 KiB and queued output per client to 1 MiB; stalled output is disconnected after a five-second drain deadline. Oversized inspection output can disconnect a client.
+
+## Video preview rotation and aspect changes (socket only)
+
+The circular-arrow control in the local preview is exposed as **Rotate Camera**. It changes the Mac's local camera orientation/aspect, not the remote phone's camera state. No Pi tools or automatic rotation are added.
+
+Read the current visible video context first:
+
+```json
+{"type":"command","id":"video-1","command":"video.status"}
+```
+
+When `available: true`, the response includes `windowId`, `peer`, `pid`, `window`, `localPreview`, `remoteView` and `rotationAvailable`. Dimensions include `width`, `height`, and `aspectRatio`. Use the returned target values verbatim for one explicit rotation request:
+
+```json
+{"type":"command","id":"rotate-1","command":"video.rotate","expectedWindowId":"PID:SceneWindow","expectedPeer":"Exact displayed peer"}
+```
+
+`video.rotate` scopes the unique enabled **Rotate Camera** AX button to that same FaceTime window and peer. If hidden, it briefly moves the pointer to the dynamically located local-preview center, waits for the button, then restores the pointer. It never uses a fixed-coordinate click, changes either camera's enabled state, or retries a press. Its result distinguishes `attempted` from `verifiedChange`: AXPress acceptance alone is not proof of a visible geometry change. Window/peer changes, missing controls, and ambiguity fail closed.
+
+Video-window commands intentionally do not depend on the notification-banner call tracker, which can report `call.phase: idle` during a full video call. Their target guard is **visible video context**, not verified telephony connection or cryptographic peer identity. A window identifier can be reused by FaceTime; do not reuse target values across calls or automatically replay rotations. A `video` summary is also included in ordinary snapshots.
+
+Socket watchers receive `video.layout_changed` when the local preview's aspect ratio changes by more than 2%, with `before`/`after` dimensions, `windowId`, `peer`, `source: "local_preview_geometry"`, and `remoteOrientation: "unknown"`. Initial observation, ordinary proportional resizing, and a replacement/disappearing context do not create a rotation event. Observation uses normal reconciliation (default two seconds), so very brief changes may be missed. A layout change can come from remote device rotation, the local Rotate Camera button, or other FaceTime layout changes—it is not a definitive phone-orientation signal. No automatic action follows it, and Pi's semantic event filter remains unchanged.
+
+Live probe on English macOS 26.6 / FaceTime 36: rotating the phone **with its camera off** produced `VCSessionMessageTopicDeviceOrientation` in macOS logs and changed the Mac's local preview from **150×100** to **150×69**, while the main window stayed fixed. Manually pressing Rotate Camera also changed the preview to **84×150**. Thus remote camera-on is not required for this observed signal in that configuration. The controller does not scrape private system logs or depend on their undocumented payloads; those logs were used only for the probe. The installed socket command was also live-tested: one `video.rotate` press changed **150×84 → 84×150** and returned `verifiedChange: true`; a camera-off phone rotation was subsequently received as `video.layout_changed` over the socket. Behavior on other devices/OS versions remains a compatibility assumption, not a guarantee.
+
+## Entire-screen sharing
+
+Sharing is manual-only and uses Control Center's FaceTime controls and exact **Share DISPLAY** picker button through Accessibility; it never clicks fixed coordinates. `screen.share` requires `display` plus `expectedCallId`; `screen.stop` requires `expectedCallId`. The call must still be verified connected before each delayed action. Pi additionally requires ownership of that call. The service serializes sharing actions and does not retry mutations.
+
+Success requires observing active sharing and **Allow Control = off**. macOS may default Allow Control to on when sharing starts; the bridge turns it off immediately afterward, so this is **not** a guarantee that it was never briefly enabled. It never accepts a remote-control request. A failure to establish viewing-only triggers a best-effort stop of that share, not a success claim. UI errors/timeouts require manual review. No background sharing or window-selection support is included. See [INTEGRATION.md](INTEGRATION.md) for limitations and manual commands.
 
 ## How call detection and control work
 
@@ -283,6 +316,8 @@ With `--snapshot-dir`, snapshots are saved at semantic call transitions, not eve
 | `AXInspector.swift` | Tree reading and AX observation. |
 | `AXActions.swift` | Answer, confirmation, and end-control actions. |
 | `AudioRouting.swift` | FaceTime's hidden device menu and `AXPick` selection. |
+| `ScreenSharing.swift` | Call-guarded entire-display sharing through Control Center, state verification, and Allow Control disabling. |
+| `VideoLayout.swift` | Socket-only local-preview rotation, video-context guards, and observed aspect-ratio events. |
 | `FaceTimeCalling.swift` | Explicit FaceTime Audio URL launch. |
 | `CallState.swift` | Call/confirmation extraction and local state tracking. |
 | `SocketServer.swift` | Single-instance Unix socket, bounded NDJSON framing, and nonblocking client output. |

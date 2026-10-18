@@ -3,7 +3,7 @@ import XCTest
 @testable import FaceTimeObserver
 
 final class ConfigurationTests: XCTestCase {
-    func testLoadsSharedConfigurationWithInverseVirtualRoute() throws {
+    func testLoadsV2SharedConfigurationWithPiTalkInBothDirections() throws {
         let file = try TemporaryTalkConfig()
         try file.write()
         let config = try DaemonConfiguration.load(path: file.path)
@@ -11,8 +11,10 @@ final class ConfigurationTests: XCTestCase {
         XCTAssertEqual(config.allowedRecipients, ["Recipient"])
         XCTAssertEqual(config.recipientAliases, ["Recipient": ["Recipient alias"]])
         XCTAssertFalse(config.autoAnswer)
-        XCTAssertEqual(config.inputDevice, "Pi virtual speaker")
-        XCTAssertEqual(config.outputDevice, "Pi virtual microphone")
+        XCTAssertEqual(config.inputDevice, "Pi Talk")
+        XCTAssertEqual(config.outputDevice, "Pi Talk")
+        XCTAssertEqual(config.json["inputDevice"] as? String, "Pi Talk")
+        XCTAssertEqual(config.json["outputDevice"] as? String, "Pi Talk")
         XCTAssertEqual(config.callStartTimeoutSeconds, 15)
         XCTAssertEqual(config.ringingTimeoutSeconds, 60)
     }
@@ -38,32 +40,84 @@ final class ConfigurationTests: XCTestCase {
         }
     }
 
-    func testFriendlyNamesTrimWhitespaceWithoutChangingOpaqueIDs() throws {
+    func testPhysicalNamesTrimWhitespaceWithoutChangingOpaqueIDsOrFaceTimeRoute() throws {
         var object = try SharedConfigFixture.object()
-        object["audio"] = ["physical": [:], "virtual": [
-            "microphone": ["id": " opaque input ", "name": "  Virtual mic  "],
-            "speaker": ["id": " opaque output ", "name": " Virtual speaker "]
-        ]]
+        var audio = object["audio"] as! [String: Any]
+        audio["physical"] = [
+            "microphone": ["id": " opaque input ", "name": "  Physical mic  "],
+            "speaker": ["id": " opaque output ", "name": " Physical speaker "]
+        ]
+        object["audio"] = audio
         let config = try SharedConfigFixture.decode(object)
-        XCTAssertEqual(config.inputDevice, "Virtual speaker")
-        XCTAssertEqual(config.outputDevice, "Virtual mic")
+        XCTAssertEqual(config.inputDevice, "Pi Talk")
+        XCTAssertEqual(config.outputDevice, "Pi Talk")
+        audio["physical"] = [
+            "microphone": ["id": " opaque input ", "name": "Physical mic"],
+            "speaker": ["id": " opaque output ", "name": "Physical speaker"]
+        ]
+        object["audio"] = audio
+        XCTAssertEqual(config, try SharedConfigFixture.decode(object))
+        audio["physical"] = [
+            "microphone": ["id": "opaque input", "name": "Physical mic"],
+            "speaker": ["id": "opaque output", "name": "Physical speaker"]
+        ]
+        object["audio"] = audio
+        XCTAssertNotEqual(config, try SharedConfigFixture.decode(object))
     }
 
-    func testAbsentAndPartialVirtualEndpointsNeverFallBackToPhysical() throws {
-        for virtual: [String: Any] in [[:], ["microphone": ["id": "m", "name": "Virtual mic"]],
-                                       ["speaker": ["id": "s", "name": "Virtual speaker"]]] {
+    func testAbsentOrPartialPhysicalEndpointsDoNotChangeFaceTimeRoute() throws {
+        for physical: [String: Any] in [[:], ["microphone": ["id": "m", "name": "Physical mic"]],
+                                        ["speaker": ["id": "s", "name": "Physical speaker"]]] {
             var object = try SharedConfigFixture.object()
             var audio = object["audio"] as! [String: Any]
-            audio["virtual"] = virtual
+            audio["physical"] = physical
             object["audio"] = audio
             let config = try SharedConfigFixture.decode(object)
-            XCTAssertEqual(config.inputDevice, (virtual["speaker"] as? [String: String])?["name"])
-            XCTAssertEqual(config.outputDevice, (virtual["microphone"] as? [String: String])?["name"])
+            XCTAssertEqual(config.inputDevice, "Pi Talk")
+            XCTAssertEqual(config.outputDevice, "Pi Talk")
+        }
+    }
+
+    func testVirtualUIDsMustBeExactRequiredConstants() throws {
+        let original = try SharedConfigFixture.object()
+        let originalAudio = original["audio"] as! [String: Any]
+        let originalVirtual = originalAudio["virtual"] as! [String: String]
+        for key in ["visibleUid", "internalUid"] {
+            let uid = originalVirtual[key]!
+            for invalid: Any in ["", "Pi Talk", "arbitrary", uid.uppercased(), " " + uid, uid + " ",
+                                 uid + "\n", uid + "\u{0000}", uid + ".extra",
+                                 originalVirtual[key == "visibleUid" ? "internalUid" : "visibleUid"]!,
+                                 7, true, NSNull(), [], ["id": uid]] {
+                var object = original
+                var audio = originalAudio
+                var virtual: [String: Any] = originalVirtual
+                virtual[key] = invalid
+                audio["virtual"] = virtual
+                object["audio"] = audio
+                XCTAssertThrowsError(try SharedConfigFixture.decode(object), "\(key)=\(invalid)")
+            }
+            var object = original
+            var audio = originalAudio
+            var virtual = originalVirtual
+            virtual.removeValue(forKey: key)
+            audio["virtual"] = virtual
+            object["audio"] = audio
+            XCTAssertThrowsError(try SharedConfigFixture.decode(object), "missing \(key)")
+        }
+        for invalid: Any in [NSNull(), [], "Pi Talk", [:],
+                             ["microphone": ["id": "m", "name": "Pi Talk"], "speaker": ["id": "s", "name": "Pi Talk"]],
+                             originalVirtual.merging(["extra": "value"]) { _, new in new },
+                             originalVirtual.merging(["microphone": "Pi Talk"]) { _, new in new }] {
+            var object = original
+            var audio = originalAudio
+            audio["virtual"] = invalid
+            object["audio"] = audio
+            XCTAssertThrowsError(try SharedConfigFixture.decode(object))
         }
     }
 
     func testRejectsUnsupportedVersionsUnknownKeysAndLegacyFields() throws {
-        for version: Any in [0, 2, -1, "1", true, NSNull()] {
+        for version: Any in [0, 1, 3, -1, 2.5, "2", true, NSNull()] {
             var object = try SharedConfigFixture.object()
             object["version"] = version
             XCTAssertThrowsError(try SharedConfigFixture.decode(object), "version=\(version)")
@@ -98,6 +152,21 @@ final class ConfigurationTests: XCTestCase {
             var object = try SharedConfigFixture.object()
             object.removeValue(forKey: key)
             XCTAssertThrowsError(try SharedConfigFixture.decode(object))
+        }
+        for key in ["physical", "virtual"] {
+            var object = try SharedConfigFixture.object()
+            var audio = object["audio"] as! [String: Any]
+            audio.removeValue(forKey: key)
+            object["audio"] = audio
+            XCTAssertThrowsError(try SharedConfigFixture.decode(object), "missing audio.\(key)")
+        }
+        for key in ["audio", "physical"] {
+            var object = try SharedConfigFixture.object()
+            var audio = object["audio"] as! [String: Any]
+            if key == "audio" { audio["extra"] = true }
+            else { audio["physical"] = ["extra": true] }
+            object["audio"] = audio
+            XCTAssertThrowsError(try SharedConfigFixture.decode(object), "unknown \(key) key")
         }
         let original = try SharedConfigFixture.object()
         for key in (original["facetime"] as! [String: Any]).keys {
@@ -164,8 +233,8 @@ final class ConfigurationTests: XCTestCase {
         }
     }
 
-    func testDeviceBoundsControlsAndUnknownKeysInBothProfiles() throws {
-        for profile in ["physical", "virtual"] {
+    func testPhysicalDeviceBoundsControlsAndUnknownKeys() throws {
+        for profile in ["physical"] {
             for endpoint in ["microphone", "speaker"] {
                 for field in ["id", "name"] {
                     let limit = field == "id" ? 512 : 256
@@ -185,11 +254,15 @@ final class ConfigurationTests: XCTestCase {
         }
         for invalid: Any in [NSNull(), ["id": "only-id"], ["name": "only-name"], ["id": "id", "name": "name", "extra": true]] {
             var object = try SharedConfigFixture.object()
-            object["audio"] = ["physical": [:], "virtual": ["microphone": invalid]]
+            var audio = object["audio"] as! [String: Any]
+            audio["physical"] = ["microphone": invalid]
+            object["audio"] = audio
             XCTAssertThrowsError(try SharedConfigFixture.decode(object))
         }
         var object = try SharedConfigFixture.object()
-        object["audio"] = ["physical": [:], "virtual": ["speaker": ["id": String(repeating: "é", count: 256), "name": String(repeating: "é", count: 128)]]]
+        var audio = object["audio"] as! [String: Any]
+        audio["physical"] = ["speaker": ["id": String(repeating: "é", count: 256), "name": String(repeating: "é", count: 128)]]
+        object["audio"] = audio
         XCTAssertNoThrow(try SharedConfigFixture.decode(object))
     }
 

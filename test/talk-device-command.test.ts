@@ -3,6 +3,7 @@ import test, { type TestContext } from "node:test";
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { registerTalk } from "../extensions/talk/index.ts";
 import type { TalkDeviceSettings } from "../extensions/talk/audio-devices.ts";
+import { MANAGED_VIRTUAL_AUDIO } from "../extensions/talk/virtual-audio.ts";
 
 type Dependencies = NonNullable<Parameters<typeof registerTalk>[1]>;
 function harness(t: TestContext, mode: "native" | "browser" = "native") {
@@ -14,6 +15,7 @@ function harness(t: TestContext, mode: "native" | "browser" = "native") {
   let answers: (string | undefined)[] = [];
   let settings: TalkDeviceSettings = {};
   let discoveries = 0;
+  let diagnostics = 0;
   let closes = 0;
   const ctx = {
     mode: "tui", hasUI: true, cwd: "/project", isIdle: () => true,
@@ -35,7 +37,16 @@ function harness(t: TestContext, mode: "native" | "browser" = "native") {
     audioMode: mode,
     loadAudioDevices: async () => structuredClone(settings),
     saveAudioDevices: async (next) => { settings = structuredClone(next); saved.push(settings); },
-    resetAudioProfiles: async () => { settings = {}; saved.push({}); },
+    loadAudioProfiles: async () => ({ physical: structuredClone(settings), virtual: { ...MANAGED_VIRTUAL_AUDIO } }),
+    diagnoseVirtualAudio: async (_signal, route) => {
+      diagnostics++;
+      assert.deepEqual(route, MANAGED_VIRTUAL_AUDIO);
+      return {
+        visible: { uid: route.visibleUid, resolved: true, audio_device_id: 41, name: "Pi Talk", nominal_sample_rate: 48_000, input_channels: 2, output_channels: 2 },
+        internal: { uid: route.internalUid, resolved: true, audio_device_id: 42, name: "Pi Talk Internal", nominal_sample_rate: 48_000, input_channels: 2, output_channels: 2 },
+        simultaneous_streams: true, issues: [],
+      };
+    },
     listAudioDevices: async () => { discoveries++; return {
       inputs: [{ id: "mic-1", name: "USB Microphone", is_default: true }],
       outputs: [{ id: "out-1", name: "Headphones", is_default: true }],
@@ -59,16 +70,16 @@ function harness(t: TestContext, mode: "native" | "browser" = "native") {
     command: (args: string) => command(args, ctx), ctx, dependencies, notices, selections, saved, opened,
     setAnswers: (...values: (string | undefined)[]) => { answers = values; },
     setSettings: (value: TalkDeviceSettings) => { settings = value; },
-    get discoveries() { return discoveries; }, get closes() { return closes; },
+    get discoveries() { return discoveries; }, get diagnostics() { return diagnostics; }, get closes() { return closes; },
     fire: (name: string) => handlers.get(name)?.({}, ctx),
   };
 }
 
 test("/talk devices saves both selections without opening a call; next connection receives IDs", async (t) => {
   const h = harness(t);
-  h.setAnswers("Physical", "1. USB Microphone [default]", "1. Headphones [default]");
+  h.setAnswers("1. USB Microphone [default]", "1. Headphones [default]");
   await h.command("devices");
-  assert.deepEqual(h.selections[0], ["Physical", "Virtual"]);
+  assert.deepEqual(h.selections[0], ["System default", "1. USB Microphone [default]"]);
   assert.equal(h.discoveries, 1);
   assert.equal(h.opened.length, 0);
   assert.deepEqual(h.saved, [{ microphone: { id: "mic-1", name: "USB Microphone" }, speaker: { id: "out-1", name: "Headphones" } }]);
@@ -81,7 +92,7 @@ test("/talk devices saves both selections without opening a call; next connectio
 test("changing selections preserves the active call until reconnect", async (t) => {
   const h = harness(t);
   await h.command("start");
-  h.setAnswers("Physical", "1. USB Microphone [default]", "System default");
+  h.setAnswers("1. USB Microphone [default]", "System default");
   await h.command("devices");
   assert.equal(h.closes, 0);
   assert.equal(h.opened.length, 1);
@@ -95,7 +106,7 @@ test("changing selections preserves the active call until reconnect", async (t) 
 
 test("cancel is transactional; explicit audio reset does not enumerate and startup errors stay safe", async (t) => {
   const h = harness(t);
-  h.setAnswers("Physical", "1. USB Microphone [default]", undefined);
+  h.setAnswers("1. USB Microphone [default]", undefined);
   await h.command("devices");
   assert.equal(h.saved.length, 0);
   h.dependencies.loadAudioDevices = async () => { throw new Error("private invalid config"); };
@@ -121,34 +132,26 @@ test("non-native and headless device pickers do not enumerate or persist", async
   assert.equal(native.saved.length, 0);
 });
 
-test("virtual profile selection and reset do not overwrite physical selections", async (t) => {
+test("virtual routing stays hardcoded and diagnostics are explicit without a profile picker", async (t) => {
   const h = harness(t);
-  const writes: unknown[] = [];
-  h.dependencies.loadAudioProfiles = async () => ({ physical: { microphone: { id: "physical", name: "Built in" } }, virtual: {} });
-  h.dependencies.saveAudioProfile = async (profile, settings) => { writes.push({ profile, settings }); };
-  h.setAnswers("1. USB Microphone [default]", "1. Headphones [default]");
-  await h.command("devices virtual");
-  assert.deepEqual(writes, [{ profile: "virtual", settings: { microphone: { id: "mic-1", name: "USB Microphone" }, speaker: { id: "out-1", name: "Headphones" } } }]);
-  assert.equal(h.saved.length, 0, "legacy physical save was not called");
-  await h.command("devices virtual reset");
-  assert.deepEqual(writes[1], { profile: "virtual", settings: {} });
+  await h.command("devices diagnostics");
+  assert.equal(h.diagnostics, 1);
+  assert.equal(h.discoveries, 0);
+  assert.equal(h.selections.length, 0);
+  assert.equal(h.saved.length, 0);
+  assert.match(h.notices.at(-1)!, /Simultaneous hidden capture\/playback: available/);
+  assert.match(h.notices.at(-1)!, /AudioDeviceID: 42 \(ephemeral\)/);
 });
 
-test("the first picker can select virtual, or cancel without loading/enumerating/saving", async (t) => {
+test("the physical picker cancels transactionally without any profile choice", async (t) => {
   const h = harness(t);
-  const writes: unknown[] = [];
-  let loads = 0;
-  h.dependencies.loadAudioProfiles = async () => { loads++; return { physical: {}, virtual: {} }; };
-  h.dependencies.saveAudioProfile = async (profile, settings) => { writes.push({ profile, settings }); };
   h.setAnswers(undefined);
   await h.command("devices");
-  assert.equal(h.discoveries, 0);
-  assert.equal(loads, 0);
-  assert.equal(writes.length, 0);
-  h.setAnswers("Virtual", "1. USB Microphone [default]", "System default");
-  await h.command("devices");
-  assert.deepEqual(writes, [{ profile: "virtual", settings: { microphone: { id: "mic-1", name: "USB Microphone" } } }]);
-  assert.match(h.notices.at(-1)!, /Talk virtual audio settings saved/);
+  assert.equal(h.discoveries, 1);
+  assert.equal(h.diagnostics, 0);
+  assert.equal(h.selections.length, 1);
+  assert.deepEqual(h.selections[0], ["System default", "1. USB Microphone [default]"]);
+  assert.equal(h.saved.length, 0);
 });
 
 test("shutdown cancels discovery and does not save or open stale dialogs", async (t) => {

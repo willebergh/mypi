@@ -45,7 +45,7 @@ final class ConfigurationReloadTests: XCTestCase {
             }
     }
 
-    func testReloadCommitsCoherentPolicyAndVerifiedInverseRouteFromCurrentFile() throws {
+    func testReloadCommitsCoherentPolicyAndVerifiedPiTalkRouteFromCurrentFile() throws {
         let file = try TemporaryTalkConfig()
         try file.write()
         var current = Options(arguments: ["binary", "watch", "--config", file.path])
@@ -53,8 +53,10 @@ final class ConfigurationReloadTests: XCTestCase {
         object["facetime"] = ["allowedCallers": ["New caller"], "allowedRecipients": ["New recipient"],
                               "recipientAliases": ["New recipient": ["New alias"]],
                               "callStartTimeoutSeconds": 30, "ringingTimeoutSeconds": 120]
-        object["audio"] = ["physical": [:], "virtual": ["microphone": ["id": "new-mic", "name": "New mic"],
-                                                        "speaker": ["id": "new-speaker", "name": "New speaker"]]]
+        var audio = object["audio"] as! [String: Any]
+        audio["physical"] = ["microphone": ["id": "new-mic", "name": "New physical mic"],
+                             "speaker": ["id": "new-speaker", "name": "New physical speaker"]]
+        object["audio"] = audio
         try file.writeObject(object)
         var routes: [[String]] = []
         let candidate = try reloadedTalkOptions(current: current, phase: "idle", hasPendingOutgoing: false,
@@ -65,10 +67,13 @@ final class ConfigurationReloadTests: XCTestCase {
                 routes.append([input, output])
                 // Effective policy remains unchanged until the caller commits.
                 XCTAssertEqual(current.allowedCallers, ["Caller"])
-                XCTAssertEqual(current.inputDevice, "Pi virtual speaker")
+                XCTAssertEqual(current.inputDevice, "Pi Talk")
+                XCTAssertEqual(current.outputDevice, "Pi Talk")
             })
         current = candidate
-        XCTAssertEqual(routes, [["New speaker", "New mic"]])
+        XCTAssertEqual(routes, [["Pi Talk", "Pi Talk"]])
+        XCTAssertEqual(current.inputDevice, "Pi Talk")
+        XCTAssertEqual(current.outputDevice, "Pi Talk")
         XCTAssertEqual(current.allowedCallers, ["New caller"])
         XCTAssertEqual(current.allowedRecipients, ["New recipient"])
         XCTAssertEqual(current.recipientAliases, ["New recipient": ["New alias"]])
@@ -93,7 +98,8 @@ final class ConfigurationReloadTests: XCTestCase {
             applyRouting: { _, _ in XCTFail("Bad files must not route") }))
         XCTAssertEqual(current.allowedCallers, ["Caller"])
         XCTAssertEqual(current.allowedRecipients, ["Recipient"])
-        XCTAssertEqual(current.inputDevice, "Pi virtual speaker")
+        XCTAssertEqual(current.inputDevice, "Pi Talk")
+        XCTAssertEqual(current.outputDevice, "Pi Talk")
         XCTAssertNil(current.configError)
         var object = try SharedConfigFixture.object()
         var policy = object["facetime"] as! [String: Any]
@@ -108,23 +114,45 @@ final class ConfigurationReloadTests: XCTestCase {
         XCTAssertEqual(current.allowedCallers, ["Changed"])
     }
 
-    func testPartialOrUnsetVirtualRouteDoesNotApplyAnyRoutingOrPhysicalDefaults() throws {
+    func testInvalidVirtualUIDsRejectReloadBeforeRoutingOrPolicyCommit() throws {
         let file = try TemporaryTalkConfig()
         try file.write()
         let current = Options(arguments: ["binary", "watch", "--config", file.path])
-        for virtual: [String: Any] in [[:], ["microphone": ["id": "mic", "name": "Virtual mic"]],
-                                       ["speaker": ["id": "speaker", "name": "Virtual speaker"]]] {
-            var object = try SharedConfigFixture.object()
-            var audio = object["audio"] as! [String: Any]
-            audio["virtual"] = virtual
-            object["audio"] = audio
-            try file.writeObject(object)
-            let candidate = try reloadedTalkOptions(current: current, phase: "idle", hasPendingOutgoing: false,
-                applyRouting: { _, _ in XCTFail("Both explicit virtual endpoints are required") })
-            XCTAssertEqual(candidate.allowedCallers, ["Caller"])
-            XCTAssertEqual(candidate.inputDevice, (virtual["speaker"] as? [String: String])?["name"])
-            XCTAssertEqual(candidate.outputDevice, (virtual["microphone"] as? [String: String])?["name"])
+        let original = try SharedConfigFixture.object()
+        let originalAudio = original["audio"] as! [String: Any]
+        let virtual = originalAudio["virtual"] as! [String: String]
+        var invalidRoutes: [[String: Any]] = [[:],
+            ["visibleUid": virtual["visibleUid"]!], ["internalUid": virtual["internalUid"]!],
+            ["microphone": ["id": "mic", "name": "Pi Talk"], "speaker": ["id": "speaker", "name": "Pi Talk"]],
+            ["visibleUid": virtual["internalUid"]!, "internalUid": virtual["visibleUid"]!]]
+        for key in ["visibleUid", "internalUid"] {
+            var invalid: [String: Any] = virtual
+            invalid[key] = virtual[key]! + " "
+            invalidRoutes.append(invalid)
         }
+        for invalid in invalidRoutes {
+            var object = original
+            var audio = originalAudio
+            audio["virtual"] = invalid
+            object["audio"] = audio
+            var policy = object["facetime"] as! [String: Any]
+            policy["allowedCallers"] = ["Must not commit"]
+            object["facetime"] = policy
+            try file.writeObject(object)
+            XCTAssertThrowsError(try reloadedTalkOptions(current: current, phase: "idle", hasPendingOutgoing: false,
+                applyRouting: { _, _ in XCTFail("Invalid virtual UIDs must not route") }))
+            XCTAssertEqual(current.allowedCallers, ["Caller"])
+            XCTAssertEqual(current.inputDevice, "Pi Talk")
+            XCTAssertEqual(current.outputDevice, "Pi Talk")
+            XCTAssertNil(current.configError)
+        }
+        try file.write()
+        let candidate = try reloadedTalkOptions(current: current, phase: "idle", hasPendingOutgoing: false,
+            applyRouting: { input, output in
+                XCTAssertEqual(input, "Pi Talk")
+                XCTAssertEqual(output, "Pi Talk")
+            })
+        XCTAssertEqual(candidate.allowedCallers, ["Caller"])
     }
 
     func testMissingFileClearsPolicyButEmptyFileErrorsWithoutRouting() throws {
@@ -157,14 +185,49 @@ final class ConfigurationReloadTests: XCTestCase {
     }
 
     func testRoutingVerificationRequiresBothUniqueSelectedDevices() {
-        func device(_ section: String, _ name: String, selected: Bool = true) -> FaceTimeAudioDevice {
-            FaceTimeAudioDevice(section: section, name: name, identifier: nil, selected: selected, enabled: true)
+        func device(_ section: String, _ name: String = "Pi Talk", selected: Bool = true, enabled: Bool = true) -> FaceTimeAudioDevice {
+            FaceTimeAudioDevice(section: section, name: name, identifier: nil, selected: selected, enabled: enabled)
         }
-        let devices = [device("input", "Pi virtual speaker"), device("output", "Pi virtual microphone")]
-        XCTAssertNil(faceTimeAudioRoutingVerificationError(input: "Pi virtual speaker", output: "Pi virtual microphone", devices: devices))
-        XCTAssertNotNil(faceTimeAudioRoutingVerificationError(input: "Pi virtual microphone", output: "Pi virtual speaker", devices: devices))
-        XCTAssertNotNil(faceTimeAudioRoutingVerificationError(input: "Pi virtual speaker", output: "Pi virtual microphone", devices: [devices[0]]))
-        XCTAssertNotNil(faceTimeAudioRoutingVerificationError(input: "Pi virtual speaker", output: "Pi virtual microphone", devices: devices + [devices[0]]))
-        XCTAssertNotNil(faceTimeAudioRoutingVerificationError(input: "Pi virtual speaker", output: "Pi virtual microphone", devices: [device("input", "Pi virtual speaker", selected: false), devices[1]]))
+        let devices = [device("input"), device("output")]
+        XCTAssertNil(faceTimeAudioRoutingVerificationError(input: "Pi Talk", output: "Pi Talk", devices: devices))
+        XCTAssertNotNil(faceTimeAudioRoutingVerificationError(input: "Wrong input", output: "Pi Talk", devices: devices))
+        XCTAssertNotNil(faceTimeAudioRoutingVerificationError(input: "Pi Talk", output: "Wrong output", devices: devices))
+        for section in ["input", "output"] {
+            XCTAssertNotNil(faceTimeAudioRoutingVerificationError(input: "Pi Talk", output: "Pi Talk", devices: devices.filter { $0.section != section }))
+            XCTAssertNotNil(faceTimeAudioRoutingVerificationError(input: "Pi Talk", output: "Pi Talk", devices: devices + [device(section)]))
+            let other = devices.filter { $0.section != section }
+            XCTAssertNotNil(faceTimeAudioRoutingVerificationError(input: "Pi Talk", output: "Pi Talk", devices: other + [device(section, selected: false)]))
+            XCTAssertNotNil(faceTimeAudioRoutingVerificationError(input: "Pi Talk", output: "Pi Talk", devices: other + [device(section, enabled: false)]))
+        }
+    }
+
+    func testSoleDefaultPiTalkInputUsesExactCoreAudioUIDOnlyWhenFaceTimeOmitsSection() {
+        let output = FaceTimeAudioDevice(section: "output", name: "Pi Talk", identifier: "pi_talk", selected: true, enabled: true)
+        let routed = addingSoleDefaultPiTalkInput(
+            to: [output], microphoneSectionPresent: false, outputSectionPresent: true,
+            defaultInputUID: piTalkVisibleAudioUID)
+        XCTAssertEqual(routed.count, 2)
+        XCTAssertEqual(routed.last, FaceTimeAudioDevice(
+            section: "input", name: "Pi Talk", identifier: faceTimeSystemDefaultInputIdentifier,
+            selected: true, enabled: true))
+        XCTAssertNil(faceTimeAudioRoutingVerificationError(input: "Pi Talk", output: "Pi Talk", devices: routed))
+
+        for uid in [nil, "", "io.github.willebergh.pitalk.audio.internal", piTalkVisibleAudioUID + " "] as [String?] {
+            XCTAssertEqual(addingSoleDefaultPiTalkInput(
+                to: [output], microphoneSectionPresent: false, outputSectionPresent: true,
+                defaultInputUID: uid), [output])
+        }
+        XCTAssertEqual(addingSoleDefaultPiTalkInput(
+            to: [output], microphoneSectionPresent: true, outputSectionPresent: true,
+            defaultInputUID: piTalkVisibleAudioUID), [output])
+        XCTAssertEqual(addingSoleDefaultPiTalkInput(
+            to: [], microphoneSectionPresent: false, outputSectionPresent: false,
+            defaultInputUID: piTalkVisibleAudioUID), [])
+
+        let unexpectedInput = FaceTimeAudioDevice(
+            section: "input", name: "Other", identifier: "other", selected: true, enabled: true)
+        XCTAssertEqual(addingSoleDefaultPiTalkInput(
+            to: [unexpectedInput, output], microphoneSectionPresent: false, outputSectionPresent: true,
+            defaultInputUID: piTalkVisibleAudioUID), [unexpectedInput, output])
     }
 }

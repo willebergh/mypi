@@ -5,6 +5,7 @@ mod protocol;
 mod resample;
 mod v3;
 mod v3_media;
+mod virtual_audio;
 
 use std::collections::VecDeque;
 use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
@@ -85,6 +86,32 @@ async fn main() -> Result<()> {
                     session = Session::V3(Box::new(created));
                     events_tx.send(Event::Offer { sdp }).await?;
                 }
+                Command::StartV3Virtual {
+                    visible_uid,
+                    internal_uid,
+                } => {
+                    stop(&mut session).await?;
+                    events_tx
+                        .send(Event::State {
+                            state: "connecting",
+                        })
+                        .await?;
+                    let (created, sdp) =
+                        v3::V3Session::create_virtual(visible_uid, internal_uid, events_tx.clone())
+                            .await?;
+                    session = Session::V3(Box::new(created));
+                    events_tx.send(Event::Offer { sdp }).await?;
+                }
+                Command::DiagnoseVirtualAudio {
+                    visible_uid,
+                    internal_uid,
+                } => {
+                    if !matches!(&session, Session::Idle) {
+                        anyhow::bail!("virtual audio diagnostics require an idle helper");
+                    }
+                    let diagnostic = virtual_audio::diagnose(&visible_uid, &internal_uid).await;
+                    events_tx.send(diagnostic).await?;
+                }
                 Command::StartV3Bridge => {
                     stop(&mut session).await?;
                     events_tx
@@ -128,6 +155,7 @@ async fn main() -> Result<()> {
                                     let _ = dictation_events
                                         .send(Event::Error {
                                             message: error.to_string(),
+                                            code: None,
                                         })
                                         .await;
                                     return;
@@ -145,6 +173,7 @@ async fn main() -> Result<()> {
                                 let _ = dictation_events
                                     .send(Event::Error {
                                         message: "microphone stream failed".to_owned(),
+                                        code: None,
                                     })
                                     .await;
                                 return;
@@ -217,13 +246,7 @@ async fn main() -> Result<()> {
         match result {
             Ok(true) => break,
             Ok(false) => {}
-            Err(error) => {
-                events_tx
-                    .send(Event::Error {
-                        message: format!("{error:#}"),
-                    })
-                    .await?
-            }
+            Err(error) => events_tx.send(Event::error(&error)).await?,
         }
     }
     stop(&mut session).await?;
@@ -456,6 +479,7 @@ impl OutboxQueues {
         self.dropped_media += (before - self.control.len()) as u64;
         let error = Control::Event(Event::Error {
             message: DICTATION_AUDIO_LOST.to_owned(),
+            code: None,
         });
         if before_stop {
             self.control.push_front(error);
