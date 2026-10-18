@@ -82,7 +82,7 @@ Swift requires shared schema **version 2**: `audio.physical` retains the optiona
 - Matching normalizes casing, surrounding whitespace, phone punctuation, and selected bidirectional formatting characters. It does not resolve Contacts or infer country codes.
 - A contact display name match is **not** cryptographic verification of a caller's phone/email identity. Configure names only if that trust level is acceptable.
 
-For a custom Pi agent directory, use the app's **Choose Talk config…** menu, then Stop/Start (or Retry). macOS preferences store only the selected location. Pi checks the reported path so a GUI app that lacks the terminal environment cannot silently use different policy. An explicit CLI `--config PATH` still wins; developer CLI flags remain available for debugging, not as another persisted configuration. See `--help`.
+For a custom Pi agent directory, use the app's **Choose Talk config…** menu, then Stop/Start (or Retry). macOS preferences store the selected location plus separately scoped, non-authorizing video-follow preferences; they never copy audio routing or caller policy. Pi checks the reported path so a GUI app that lacks the terminal environment cannot silently use different policy. An explicit CLI `--config PATH` still wins; developer CLI flags remain available for debugging, not as another persisted configuration. See `--help`.
 
 ## Audio routing with Talk
 
@@ -176,6 +176,9 @@ Use a real configured recipient only when intentionally placing a call. Commands
 | `hangup` | Attempt pressing the accessible `End` control. |
 | `video.status` | Read the unique FaceTime video window, peer and local-preview/remote-view dimensions; returns `available: false` if missing or ambiguous. |
 | `video.rotate` | Require `expectedWindowId` and `expectedPeer` from `video.status`; reveal and press the local preview's exact **Rotate Camera** control once. |
+| `video.follow.status` | Read persistent follow enablement and current phase. |
+| `video.follow.calibrate` | Record current preview shape as phone `portrait` or `landscape`, with `expectedWindowId`/`expectedPeer`; allowlisted views only, pauses follow. |
+| `video.follow.set` | Persist boolean `enabled`; enabling requires a distinct calibrated pair. |
 | `screen.share` | Require verified connected `expectedCallId` and exact `display`; share that entire display and verify Allow Control off. |
 | `screen.stop` | Require verified connected `expectedCallId`; stop sharing and verify local controls. |
 | `screen.status` | Read currently exposed sharing controls without opening UI; absent controls are unverified/unknown, not proof sharing stopped. |
@@ -228,7 +231,7 @@ A client should correlate responses by `id`, parse complete newline-delimited re
 
 ## Video preview rotation and aspect changes (socket only)
 
-The circular-arrow control in the local preview is exposed as **Rotate Camera**. It changes the Mac's local camera orientation/aspect, not the remote phone's camera state. No Pi tools or automatic rotation are added.
+The circular-arrow control in the local preview is exposed as **Rotate Camera**. It changes the Mac's local camera orientation/aspect, not the remote phone's camera state. No Pi tools are added. Rotation is manual unless calibrated follow mode is explicitly enabled.
 
 Read the current visible video context first:
 
@@ -246,9 +249,31 @@ When `available: true`, the response includes `windowId`, `peer`, `pid`, `window
 
 Video-window commands intentionally do not depend on the notification-banner call tracker, which can report `call.phase: idle` during a full video call. Their target guard is **visible video context**, not verified telephony connection or cryptographic peer identity. A window identifier can be reused by FaceTime; do not reuse target values across calls or automatically replay rotations. A `video` summary is also included in ordinary snapshots.
 
-Socket watchers receive `video.layout_changed` when the local preview's aspect ratio changes by more than 2%, with `before`/`after` dimensions, `windowId`, `peer`, `source: "local_preview_geometry"`, and `remoteOrientation: "unknown"`. Initial observation, ordinary proportional resizing, and a replacement/disappearing context do not create a rotation event. Observation uses normal reconciliation (default two seconds), so very brief changes may be missed. A layout change can come from remote device rotation, the local Rotate Camera button, or other FaceTime layout changes—it is not a definitive phone-orientation signal. No automatic action follows it, and Pi's semantic event filter remains unchanged.
+Socket watchers receive `video.layout_changed` when the local preview's aspect ratio changes by more than 2%, with `before`/`after` dimensions, `windowId`, `peer`, `source: "local_preview_geometry"`, and `remoteOrientation: "unknown"`. Initial observation, ordinary proportional resizing, and a replacement/disappearing context do not create a rotation event. Observation uses normal reconciliation (default two seconds), so very brief changes may be missed. A layout change can come from remote device rotation, the local Rotate Camera button, or other FaceTime layout changes—it is not a definitive phone-orientation signal. The event itself is not an action request. Optional calibrated follow mode below samples the same geometry independently; Pi's semantic event filter remains unchanged.
 
 Live probe on English macOS 26.6 / FaceTime 36: rotating the phone **with its camera off** produced `VCSessionMessageTopicDeviceOrientation` in macOS logs and changed the Mac's local preview from **150×100** to **150×69**, while the main window stayed fixed. Manually pressing Rotate Camera also changed the preview to **84×150**. Thus remote camera-on is not required for this observed signal in that configuration. The controller does not scrape private system logs or depend on their undocumented payloads; those logs were used only for the probe. The installed socket command was also live-tested: one `video.rotate` press changed **150×84 → 84×150** and returned `verifiedChange: true`; a camera-off phone rotation was subsequently received as `video.layout_changed` over the socket. Behavior on other devices/OS versions remains a compatibility assumption, not a guarantee.
+
+### Persistent automatic matching for allowlisted video calls
+
+Follow mode is initially disabled. Calibrate **the phone's actual orientation**, not the local preview's axis, with the same phone/camera/layout settings you will use normally. Hold each position still for several seconds and use fresh `video.status` target values:
+
+```json
+{"type":"command","id":"cal-p","command":"video.follow.calibrate","orientation":"portrait","expectedWindowId":"PID:SceneWindow","expectedPeer":"Exact displayed peer"}
+{"type":"command","id":"cal-l","command":"video.follow.calibrate","orientation":"landscape","expectedWindowId":"PID:SceneWindow","expectedPeer":"Exact displayed peer"}
+{"type":"command","id":"follow-on","command":"video.follow.set","enabled":true}
+{"type":"command","id":"follow-status","command":"video.follow.status"}
+{"type":"command","id":"follow-off","command":"video.follow.set","enabled":false}
+```
+
+Calibration stores the shape `max(aspectRatio, 1/aspectRatio)` **and the Mac preview's axis at capture time**, separately for each normalized displayed peer. The samples identify matching-axis versus differing-axis layouts, not an absolute shape for portrait/landscape: the phone's target axis is derived relative to the current Mac axis. The two samples must differ sufficiently and cover one matching and one differing case; unknown/ambiguous shapes cause no action. Older calibration without capture-axis information requires recalibration. With enablement persisted, future video views for a calibrated peer run automatically **only while that peer still matches the currently loaded shared caller allowlist**. Display-name matching is not cryptographic caller authentication. The same video-window targeting limitations as `video.rotate` apply.
+
+Two stable samples spanning at least one second are required (normally about 2–4 seconds with the reconciliation interval). Follow clicks Rotate Camera once only when the preview axis disagrees with the calibrated phone state. It rechecks enablement, peer/window, allowlist and target before each delayed action, verifies the resulting axis, and waits five seconds after an attempt. Relative-axis classification handles normal camera-axis flips. Because Rotate Camera can also reset crop to another ratio, the follower verifies the requested axis and quarantines its own post-click shape until a fresh, different shape arrives; it never interprets that self-caused crop as a new phone state. Failed/unverified actions latch a pause for that phone state rather than retrying; a genuinely different recognized phone state, new video context, or explicit disable/re-enable releases the latch. `video.follow` events report `rotating`, `matched`, or `paused_after_failure`; snapshots include `videoFollow` status.
+
+This is an **empirical geometry heuristic**, not an authoritative device-orientation API. If a genuine phone rotation produces exactly the same shape as the quarantined self-caused crop, geometry alone cannot distinguish it and follow waits instead of risking a toggle loop. Camera/crop/layout changes can invalidate calibration. Transient missing views pause observation without clearing a failed-click latch for the same window/peer. Disable and recalibrate if behavior changes. Follow never enables a camera, shares a screen, initiates/answers a call, or changes device routing. It may briefly move/restore the pointer to reveal Rotate Camera. Disable follow before using manual rotation if you do not want it corrected back.
+
+Live validation on the calibrated phone: follow made one portrait correction and reported `video.follow` with `status: "matched"`, `target: "portrait"`, and `verified: true`; the user then confirmed landscape matching, with the service reporting `phase: "matched"` and a landscape preview. Other phone/layout combinations still need their own validation.
+
+Enablement and calibration persist in the app's `dev.mypi.facetime-bridge` preferences domain under a key scoped to the selected absolute `talk.json` path. They are UI preferences, not another authorization/audio config. Invalid preferences disable automation. Each calibration action persistently disables follow until explicitly re-enabled; service stop cancels pending actions but does not erase preferences.
 
 ## Entire-screen sharing
 
@@ -318,6 +343,7 @@ With `--snapshot-dir`, snapshots are saved at semantic call transitions, not eve
 | `AudioRouting.swift` | FaceTime's hidden device menu and `AXPick` selection. |
 | `ScreenSharing.swift` | Call-guarded entire-display sharing through Control Center, state verification, and Allow Control disabling. |
 | `VideoLayout.swift` | Socket-only local-preview rotation, video-context guards, and observed aspect-ratio events. |
+| `VideoFollow.swift` | Per-peer calibration preferences and allowlist-gated automatic matching with debounce, feedback suppression, and failure latch. |
 | `FaceTimeCalling.swift` | Explicit FaceTime Audio URL launch. |
 | `CallState.swift` | Call/confirmation extraction and local state tracking. |
 | `SocketServer.swift` | Single-instance Unix socket, bounded NDJSON framing, and nonblocking client output. |

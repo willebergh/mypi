@@ -63,7 +63,7 @@ Diagnostics do not contact OpenAI or start a WebRTC call. A successful preflight
 
 ## Standalone GUI app and custom paths
 
-A LaunchServices app may not inherit the terminal's `PI_CODING_AGENT_DIR`. Its default remains `~/.pi/agent/talk.json`. For a custom agent directory, use **Choose Talk config…** in the bridge app and Stop/Start so the app and Pi report the same path. The app remembers only that path in macOS preferences.
+A LaunchServices app may not inherit the terminal's `PI_CODING_AGENT_DIR`. Its default remains `~/.pi/agent/talk.json`. For a custom agent directory, use **Choose Talk config…** in the bridge app and Stop/Start so the app and Pi report the same path. The app remembers that path in macOS preferences. Optional video-follow enablement and empirical per-peer calibration are separate UI preferences scoped to that path; they do not copy or replace caller authorization or audio policy. See [video follow](facetime/README.md#persistent-automatic-matching-for-allowlisted-video-calls).
 
 The bridge reports its selected config path in status. Pi refuses FaceTime mode when paths differ. No IPC command silently repoints the bridge to another policy file.
 

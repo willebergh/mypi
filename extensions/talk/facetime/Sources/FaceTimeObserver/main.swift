@@ -123,6 +123,7 @@ final class WatchService: @unchecked Sendable {
     private var screenSharing: ScreenSharingController?
     private var videoLayout: VideoLayoutController?
     private var videoLayoutObserver = VideoLayoutObserver()
+    private var videoFollow: VideoFollowController?
     private var autoAnswerAttemptedCallID: String?
     private var confirmationAttemptedCallID: String?
     private var routedFaceTimePID: pid_t?
@@ -153,6 +154,21 @@ final class WatchService: @unchecked Sendable {
             return screenSharingCall(tracker: self.callTracker, fresh: fresh)
         }, isRunning: { run.isRunning })
         videoLayout = VideoLayoutController(isRunning: { run.isRunning })
+        let followStore = VideoFollowStore(configPath: options.configPath)
+        let followSettings: VideoFollowSettings
+        let followError: String?
+        do { followSettings = try followStore.load(); followError = nil }
+        catch { followSettings = VideoFollowSettings(); followError = "Invalid video follow preferences; automatic rotation is disabled" }
+        videoFollow = VideoFollowController(settings: followSettings, loadError: followError,
+            save: { try followStore.save($0) },
+            allowed: { [weak self] peer in
+                self.map { callerIsAllowed(peer, allowedCallers: $0.options.allowedCallers) } ?? false
+            }, rotate: { [weak self] action, complete in
+                guard let self, run.isRunning, let controller = self.videoLayout else { return }
+                controller.rotate(action.command, authorize: { [weak self] layout, afterAttempt in
+                    run.isRunning && (self?.videoFollow?.permits(layout, action: action, afterAttempt: afterAttempt) ?? false)
+                }, completion: complete)
+            }, emit: { [weak self] event in run.perform { self?.emit(event) } })
         let configuration = options.configurationJSON
         let socket = SocketServer(path: options.socketPath, initial: { [weak self] in
             guard run.isRunning, let self else {
@@ -185,6 +201,8 @@ final class WatchService: @unchecked Sendable {
         run = nil
         screenSharing?.invalidate()
         screenSharing = nil
+        videoFollow?.invalidate()
+        videoFollow = nil
         videoLayout?.invalidate()
         videoLayout = nil
         videoLayoutObserver = VideoLayoutObserver()
@@ -241,7 +259,9 @@ final class WatchService: @unchecked Sendable {
         }
 
         let currentSnapshots = Array(snapshots.values)
-        if let event = videoLayoutObserver.update(VideoLayout.extract(currentSnapshots)) { emit(event) }
+        let currentVideo = VideoLayout.extract(currentSnapshots)
+        if let event = videoLayoutObserver.update(currentVideo) { emit(event) }
+        videoFollow?.observe(currentVideo, manualBusy: videoLayout?.isBusy ?? false)
         handleCallConfirmation(CallConfirmation.extract(from: currentSnapshots))
         let observation = CallObservation.extract(from: currentSnapshots)
         if pendingRecipient != nil, observation.present, let observedIdentity = observation.identity,
@@ -284,6 +304,7 @@ final class WatchService: @unchecked Sendable {
             "permission": permissionDiagnostic(),
             "call": callTracker.statusJSON,
             "video": VideoLayout.extract(Array(snapshots.values))?.json ?? ["available": false],
+            "videoFollow": videoFollow?.status ?? ["enabled": false],
             "configuration": options.configurationJSON,
             "processes": processes
         ], allowedCallers: options.allowedCallers)
@@ -366,6 +387,32 @@ final class WatchService: @unchecked Sendable {
                 return
             }
             startOutgoingCall(recipient: recipient, id: id, reply: reply)
+        case "video.follow.status", "video.follow.set", "video.follow.calibrate":
+            do {
+                guard let follow = videoFollow else { throw videoFollowError("Video follow controller is unavailable") }
+                let extra: Set<String> = name == "video.follow.set" ? ["enabled"] :
+                    name == "video.follow.calibrate" ? ["orientation", "expectedWindowId", "expectedPeer"] : []
+                guard Set(command.keys).isSubset(of: extra.union(["type", "command", "id"])) else {
+                    throw videoFollowError("Unknown video follow command argument")
+                }
+                var value: [String: Any]
+                if name == "video.follow.set" {
+                    guard let enabled = command["enabled"] as? NSNumber,
+                          CFGetTypeID(enabled) == CFBooleanGetTypeID() else { throw videoFollowError("enabled must be a boolean") }
+                    try follow.setEnabled(enabled.boolValue)
+                    value = follow.status
+                } else if name == "video.follow.calibrate" {
+                    guard let orientation = command["orientation"] as? String,
+                          let windowID = command["expectedWindowId"] as? String,
+                          let peer = command["expectedPeer"] as? String,
+                          let layout = try videoLayout?.readCurrent() else { throw videoFollowError("Calibration requires current video.status target values") }
+                    value = try follow.calibrate(orientation: orientation, layout: layout, expectedWindowID: windowID, expectedPeer: peer)
+                } else { value = follow.status }
+                reply(["type": "response", "id": id, "ok": true, "result": value])
+            } catch {
+                let error = (error as? VideoLayoutError) ?? videoFollowError("Could not save video follow preferences")
+                reply(commandError(id: id, code: error.code, message: error.message))
+            }
         case "video.status":
             guard Set(command.keys).isSubset(of: ["type", "command", "id"]) else {
                 reply(commandError(id: id, code: "invalid_command", message: "video.status accepts no parameters"))
@@ -410,7 +457,7 @@ final class WatchService: @unchecked Sendable {
         case "discover":
             reply(["type": "response", "id": id, "ok": true, "result": ["processes": allInterestingProcesses()]])
         default:
-            reply(["type": "response", "id": id, "ok": false, "error": ["code": "unsupported_command", "message": "Supported commands: status, config.reload, inspect, snapshot, discover, call, answer, hangup, audio.devices, audio.select, screen.share, screen.stop, screen.status, video.status, video.rotate"]])
+            reply(["type": "response", "id": id, "ok": false, "error": ["code": "unsupported_command", "message": "Supported commands: status, config.reload, inspect, snapshot, discover, call, answer, hangup, audio.devices, audio.select, screen.share, screen.stop, screen.status, video.status, video.rotate, video.follow.status, video.follow.set, video.follow.calibrate"]])
         }
     }
 

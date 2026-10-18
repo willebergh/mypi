@@ -60,6 +60,19 @@ Run `/talk` and wait for **Talk live** before speaking. A **locally built native
 
 Build the Rust WebRTC helper and Swift FaceTime service directly using the commands in the [native helper](extensions/talk/native/README.md) and [FaceTime app](extensions/talk/facetime/APP.md) guides. New-machine prerequisites and complete build/signing steps are in [`/skill:setup`](.pi/skills/setup/SKILL.md) and its [native Talk](.pi/skills/setup/references/native-talk.md) and [FaceTime app](.pi/skills/setup/references/facetime-app.md) references. Stop active calls and quit the helper before rebuilding. Ad-hoc signing needs no developer account; rebuilding can require a fresh manual Accessibility grant. Cargo may download locked dependencies. Generated binaries and Cargo output are gitignored.
 
+#### Webcam / visual scene
+
+The Electron/React/Three.js webcam app now lives in [`extensions/talk/webcam`](extensions/talk/webcam/README.md), alongside Talk. It retains its own package, pnpm lockfile, native adapters, editor, and tests; it is not auto-started by `/talk`. The rest of mypi's package-manager setup is unchanged for now.
+
+```bash
+pnpm --dir extensions/talk/webcam install --frozen-lockfile
+pnpm --dir extensions/talk/webcam typecheck
+pnpm --dir extensions/talk/webcam test
+pnpm --dir extensions/talk/webcam dev
+```
+
+Development startup builds native components on macOS. Camera publishing, optional agent-audio capture, and FaceTime integration have separate requirements; read the webcam guide before enabling them. Root checks exclude this independently configured Electron package. Build products and signing outputs are not included; retained verification evidence is historical, not a fresh validation on this checkout.
+
 #### macOS virtual audio driver
 
 The self-contained driver source is in [`extensions/talk/macos-audio-driver`](extensions/talk/macos-audio-driver). It builds one visible **Pi Talk** endpoint and one hidden **Pi Talk Internal** endpoint in `PiTalk.driver`. Build its distributable from that directory with `./Scripts/build_pi_talk_drivers.sh`; see the [driver guide](extensions/talk/macos-audio-driver/README.md) for build and test commands. Generated `build/` and `dist/` output stays untracked and should be produced locally, in CI, or for a release.

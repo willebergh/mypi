@@ -185,17 +185,22 @@ final class VideoLayoutController {
     private let isRunning: () -> Bool
     private let schedule: (TimeInterval, @escaping () -> Void) -> Void
     private var busy = false
+    var isBusy: Bool { busy }
     private var invalidated = false
     init(ax: VideoLayoutAX = NativeVideoLayoutAX(), isRunning: @escaping () -> Bool,
          schedule: @escaping (TimeInterval, @escaping () -> Void) -> Void = { delay, work in
              DispatchQueue.main.asyncAfter(deadline: .now() + delay, execute: work)
          }) { self.ax = ax; self.isRunning = isRunning; self.schedule = schedule }
     func invalidate() { invalidated = true; busy = false; ax.restorePointer() }
+    func readCurrent() throws -> VideoLayout {
+        guard !invalidated, isRunning() else { throw stale() }
+        return try ax.read()
+    }
     func status() -> [String: Any] {
-        guard !invalidated, isRunning(), let layout = try? ax.read() else { return ["available": false] }
+        guard let layout = try? readCurrent() else { return ["available": false] }
         return layout.json
     }
-    func rotate(_ command: [String: Any], completion: @escaping Completion) {
+    func rotate(_ command: [String: Any], authorize: @escaping (VideoLayout, Bool) -> Bool = { _, _ in true }, completion: @escaping Completion) {
         do {
             guard Set(command.keys).isSubset(of: ["type", "command", "id", "expectedWindowId", "expectedPeer"]),
                   let windowID = command["expectedWindowId"] as? String,
@@ -208,7 +213,7 @@ final class VideoLayoutController {
                 throw VideoLayoutError(code: "video_busy", message: "Video controller is stopped or another rotate action is in progress")
             }
             let before = try ax.read()
-            guard before.matches(windowID: windowID, peer: peer) else { throw stale() }
+            guard before.matches(windowID: windowID, peer: peer), authorize(before, false) else { throw stale() }
             busy = true
             var hovered = false, attempted = false, polls = 0
             func finish(_ result: Result<[String: Any], VideoLayoutError>) {
@@ -223,7 +228,7 @@ final class VideoLayoutController {
                     guard !self.invalidated, self.isRunning() else {
                         self.ax.restorePointer(); self.busy = false; return
                     }
-                    guard current.matches(windowID: windowID, peer: peer) else { throw self.stale() }
+                    guard current.matches(windowID: windowID, peer: peer), authorize(current, attempted) else { throw self.stale() }
                     if attempted {
                         let changed = current.aspectChanged(from: before)
                         if changed || polls >= 12 {
