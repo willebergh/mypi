@@ -1,10 +1,9 @@
-import path from "node:path";
 import {
-  getPackageDir,
   RpcClient,
   type JsonAgentSessionEvent,
 } from "@earendil-works/pi-coding-agent";
 import { OutputTokenRate } from "../resource-status/core.ts";
+import { resolvePiCli } from "./cli.ts";
 import {
   applySubagentEvent,
   cloneSubagentState,
@@ -218,7 +217,7 @@ export async function runSubagent(
   options: RunSubagentOptions,
 ): Promise<SubagentState> {
   const { state, task, signal, onChange } = options;
-  const cliPath = path.join(getPackageDir(), "dist", "cli.js");
+  const cliPath = resolvePiCli();
   const client = new RpcClient({
     cliPath,
     cwd: state.cwd,
