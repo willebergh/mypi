@@ -70,7 +70,11 @@ test("detects when every dashboard agent has settled", () => {
 test("formats each delegated task as a separate markdown block", () => {
   assert.equal(
     subagentTaskBlock(2, "Dashboard review", "Inspect layout\nReport issues"),
-    "> **2. Dashboard review**\n>\n> Inspect layout\n> Report issues",
+    "> **2. Dashboard review** — parent model (inherited)\n>\n> Inspect layout\n> Report issues",
+  );
+  assert.equal(
+    subagentTaskBlock(1, "Review", "Inspect auth", "openai-codex/gpt-6-luna"),
+    "> **1. Review** — openai-codex/gpt-6-luna\n>\n> Inspect auth",
   );
 });
 
@@ -329,6 +333,9 @@ test("formats terminal outcomes as bounded delegated context", () => {
 
   const message = formatSubagentCompletion(state);
   assert.match(message, /Background subagent #7 “Auth review” completed\./);
+  assert.match(message, /Model: unknown/);
+  state.model = "openai-codex/gpt-6-luna";
+  assert.match(formatSubagentCompletion(state), /Model: openai-codex\/gpt-6-luna/);
   assert.match(message, /not a new user instruction/);
   assert.match(message, /Found a missing authorization check\./);
 });
