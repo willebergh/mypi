@@ -1,6 +1,6 @@
 import type { LiveCallbacks, LiveDelegation, LiveTranscript, LiveTurn } from "./live.ts";
 
-type Callbacks = Pick<LiveCallbacks, "onTranscript" | "onTurn" | "onTurnStart" | "onDelegation" | "onError"> & {
+type Callbacks = Pick<LiveCallbacks, "onTranscript" | "onTurn" | "onTurnStart" | "onDelegation" | "onError" | "onCaption"> & {
   onDelegation(id: string, offsetMs: number, input?: string, metadata?: LiveDelegation): void;
 };
 type Role = "user" | "assistant";
@@ -84,6 +84,9 @@ export function createCodexWire(callbacks: Callbacks): {
       remember(pending[role], keys);
       partial[role] += value;
       finalized[role] = undefined;
+      // Observe the validated fragment, not role-wide assembled text: different
+      // actual item identities must never be spliced together by captions.
+      safely(() => callbacks.onCaption?.({ role, text: value as string, final: false, identities: keys }));
       emit(role, value as string, "delta", metadata);
       return;
     }
@@ -111,6 +114,9 @@ export function createCodexWire(callbacks: Callbacks): {
     } else {
       emit(role, result, "final");
     }
+    // Only an explicit authoritative full transcript can replace a caption.
+    // Missing-final synthesis above remains exclusive to the existing consumers.
+    if (typeof value === "string") safely(() => callbacks.onCaption?.({ role, text: value, final: true, identities: keys }));
     const turn = finalMetadata;
     if (turn) safely(() => callbacks.onTurn?.(role, result, turn));
     else safely(() => callbacks.onTurn?.(role, result));

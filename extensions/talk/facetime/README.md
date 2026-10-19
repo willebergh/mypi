@@ -10,8 +10,8 @@ This package remains an independent service exposing a local Unix socket. The Ty
 - Observe their UI with public macOS Accessibility APIs.
 - Identify incoming callers and enforce a local caller allowlist.
 - Answer incoming calls manually or automatically when configured.
-- Initiate FaceTime Audio calls to explicitly allowlisted phone/email addresses.
-- Confirm the outgoing “Click to Call” banner.
+- Initiate explicitly requested FaceTime audio or video calls to the sole configured owner; audio is the default.
+- Preserve audio's outgoing “Click to Call” banner path; confirm video only in the scoped standard-window structure correlated to a sole pending video request and exact recipient/alias.
 - Observe ringing, verified connection, ending, and some failure conditions.
 - Select FaceTime-specific microphone and output devices.
 - Expose commands and events over a Unix domain socket.
@@ -154,6 +154,7 @@ Paste one command per line and press Enter:
 ```json
 {"type":"command","id":"status-1","command":"status"}
 {"type":"command","id":"call-1","command":"call","to":"+46000000000"}
+{"type":"command","id":"video-call-1","command":"call","to":"+46000000000","media":"video"}
 {"type":"command","id":"answer-1","command":"answer"}
 {"type":"command","id":"hangup-1","command":"hangup"}
 {"type":"command","id":"devices-1","command":"audio.devices"}
@@ -170,8 +171,8 @@ Use a real configured recipient only when intentionally placing a call. Commands
 
 | Command | Behavior |
 |---|---|
-| `status` | Return cached call state and compact service diagnostics. |
-| `call` | Enforce recipient allowlist, apply configured routing, launch FaceTime Audio URL, and track the outgoing request. |
+| `status` | Return cached call state and compact service diagnostics, including fixed-code `videoCallDiagnostics`; no reconciliation or call actions. |
+| `call` | Optional `media: "audio" | "video"` (omitted = audio); enforce sole-owner recipient allowlist, apply routing, launch the corresponding FaceTime URL once, track outgoing intent separately from observed media. Null/unknown media and unknown arguments are rejected. |
 | `answer` | Require an identified allowlisted incoming caller and attempt answering. |
 | `hangup` | Attempt pressing the accessible `End` control. |
 | `video.status` | Read the unique FaceTime video window, peer and local-preview/remote-view dimensions; returns `available: false` if missing or ambiguous. |
@@ -200,7 +201,7 @@ Structured error example:
 {"type":"response","id":"call-1","ok":false,"error":{"code":"recipient_not_allowed","message":"Recipient must exactly match the Swift recipient allowlist"}}
 ```
 
-A successful command response means the request/action was accepted or attempted—not that the call connected or the action's intended outcome occurred. Wait for lifecycle evidence.
+A successful command response means the request/action was accepted or attempted—not that the call connected or the action's intended outcome occurred. A call response contains `callId`, `to`, and `requestedMedia`; it does not certify active video or the remote camera. If video URL launch fails but native retains the request, the response is an accepted/tracked result with `status: "retained"`, its call ID, and `error`, not an ID-less terminal rejection. Pi treats that result as an unconfirmed call error and never claims launch success. Only a call response can establish Pi's outgoing hangup target; events or snapshots alone cannot. Wait for lifecycle evidence. Snapshots advertise supported outgoing media in `configuration.callMedia: ["audio", "video"]`; protocol remains 1. Pi refuses video against older services without that capability so an ignored media argument can never silently select audio.
 
 ### Events
 
@@ -225,7 +226,9 @@ Example:
 
 Events, initial snapshots, and responses carry `protocolVersion: 1`. Events/snapshots include a per-process `serviceInstanceId`, and snapshots include the current `seq` watermark. Incoming events and incoming snapshot call state include an `allowed` boolean computed from the local caller allowlist. Call IDs/sequences remain local to one service instance; no event replay is provided.
 
-`verified` describes an event's local evidence; it is not a universal delivery/success/authentication guarantee. In particular, `call.answer_attempted` currently reports successful event creation/posting, not confirmation that FaceTime accepted the call. Only the advancing timer verifies connection.
+For `call.failed`, `status: "retained"` explicitly means **nonterminal**: native keeps the call ID in `phase: "unconfirmed"` and blocks new calls/config reloads. Consumers must gate/close voice but retain any already-owned target; do not report standby or infer connection from late timers. `status: "terminal"` (or an omitted status on older services) keeps the ordinary terminal failure meaning. `status` uses an existing protocol-1 semantic field, so it survives Pi's event filtering. Retained UI disappearance emits one `call.ended` with the same call ID, `status: "terminal"`, and `evidence: "unconfirmed_video_ui_disappeared"` before native resets; disappearance alone remains unverified. Snapshots expose retained state as `call.phase: "unconfirmed"`; reconcile it without adopting unrelated calls.
+
+`verified` describes an event's local evidence; it is not a universal delivery/success/authentication guarantee. In particular, `call.answer_attempted` currently reports successful event creation/posting, not confirmation that FaceTime accepted the call. Audio uses an advancing timer; outgoing video uses the stable identity-matched participant scene described below.
 
 A client should correlate responses by `id`, parse complete newline-delimited records across arbitrary socket chunks, impose request timeouts, reconnect, and reconcile the new initial snapshot. Do not assume one socket read equals one JSON record. The server bounds input frames to 64 KiB and queued output per client to 1 MiB; stalled output is disconnected after a five-second drain deadline. Oversized inspection output can disconnect a client.
 
@@ -247,7 +250,7 @@ When `available: true`, the response includes `windowId`, `peer`, `pid`, `window
 
 `video.rotate` scopes the unique enabled **Rotate Camera** AX button to that same FaceTime window and peer. If hidden, it briefly moves the pointer to the dynamically located local-preview center, waits for the button, then restores the pointer. It never uses a fixed-coordinate click, changes either camera's enabled state, or retries a press. Its result distinguishes `attempted` from `verifiedChange`: AXPress acceptance alone is not proof of a visible geometry change. Window/peer changes, missing controls, and ambiguity fail closed.
 
-Video-window commands intentionally do not depend on the notification-banner call tracker, which can report `call.phase: idle` during a full video call. Their target guard is **visible video context**, not verified telephony connection or cryptographic peer identity. A window identifier can be reused by FaceTime; do not reuse target values across calls or automatically replay rotations. A `video` summary is also included in ordinary snapshots.
+Video-window commands intentionally do not depend on the call tracker, which can report `call.phase: idle` during an unowned/manual full video call. Their target guard is **visible video context**, not verified telephony connection or cryptographic peer identity. A window identifier can be reused by FaceTime; do not reuse target values across calls or automatically replay rotations. A `video` summary is also included in ordinary snapshots.
 
 Socket watchers receive `video.layout_changed` when the local preview's aspect ratio changes by more than 2%, with `before`/`after` dimensions, `windowId`, `peer`, `source: "local_preview_geometry"`, and `remoteOrientation: "unknown"`. Initial observation, ordinary proportional resizing, and a replacement/disappearing context do not create a rotation event. Observation uses normal reconciliation (default two seconds), so very brief changes may be missed. A layout change can come from remote device rotation, the local Rotate Camera button, or other FaceTime layout changes—it is not a definitive phone-orientation signal. The event itself is not an action request. Optional calibrated follow mode below samples the same geometry independently; Pi's semantic event filter remains unchanged.
 
@@ -298,7 +301,7 @@ Success requires observing active sharing and **Allow Control = off**. macOS may
 
 `NSWorkspace` discovers candidate processes. AX observers subscribe to available notifications. Full tree reconciliation runs periodically (default two seconds), updating the semantic state machine. Currently AX callbacks emit diagnostics; semantic state transitions are primarily driven by reconciliation, not immediate notification-triggered reads.
 
-On the tested Mac, the important banner belongs to **Notification Centre**, not FaceTime.app. The banner exposes `FACETIME_NOTIFICATION` as its identifier/description.
+For audio/incoming banner observation, the important banner belongs to **Notification Centre**, not FaceTime.app, and exposes `FACETIME_NOTIFICATION`. Outgoing video uses a separate FaceTime standard-window path; it does not borrow audio's banner selectors.
 
 ### Incoming
 
@@ -308,21 +311,35 @@ An incoming banner exposes caller text and `Answer`/`Decline`. The service extra
 
 ### Outgoing
 
-The service opens `facetime-audio://…` explicitly with FaceTime. macOS can show a **Click to Call** confirmation rather than immediately ringing. During an active outgoing request only, the service checks the displayed identity against the requested address/its configured aliases, then presses that banner's `Call` button with `AXPress`.
+The service opens `facetime-audio://…` for audio (the backward-compatible default), or `facetime://…` for explicitly requested video, explicitly with FaceTime via `NSWorkspace`. [Apple's FaceTime Links reference](https://developer.apple.com/library/archive/featuredarticles/iPhoneURLScheme_Reference/FacetimeLinks/FacetimeLinks.html) documents the native video scheme; its archived audio examples are marked iOS-only, while this service retains its existing macOS audio behavior. There is no fallback between schemes/media.
 
-The confirmation is not treated as ringing or connection. The requested address is stable, but any friendly-name alias is an explicitly configured trust mapping, not independent proof of the underlying remote handle.
+Audio retains its **Click to Call** Notification Centre path, exact requested-address/configured-alias matching, unique banner/Call control, and explicit-media mismatch/ambiguity vetoes. Generic audio confirmations remain supported. Video never falls back to that path.
+
+The supplied read-only video observation instead showed a **FaceTime AXStandardWindow** (1024×640) containing a two-static-text group, enabled AXPress **Cancel**/**Call** buttons, and separate Cancel/Call static labels. There was no established **FaceTime Video** label or `FACETIME_NOTIFICATION`. Video therefore requires a complete idle FaceTime preflight (no existing call/confirmation UI), exactly one configured owner and one pending newly launched video request, that scoped structural layout, and the first static-text field exactly matching the whole requested address or an explicitly configured alias after normalization (the secondary content field cannot substitute). Multiple candidate windows/controls, disabled/non-pressable controls, conflicting identities or explicit opposite/unresolved media choices fail closed. Window dimensions are descriptive, not selectors. Identity/control structure is freshly reacquired before one AXPress; no retry or coordinate fallback is used. Request correlation is not independent evidence of observed media: confirmation events report `media: null`.
+
+**Unresolved evidence:** the redacted confirmation text has not established whether either static text is a standalone recipient/alias. If the first field is embedded prose, the identity appears only in secondary content, or it differs from configured identities, automatic confirmation remains unavailable; no guessed phrase, identifier, substring extraction or Contacts lookup is added. Cancel has not been automated; review/cancel manually after an unconfirmed result.
+
+The confirmation is not treated as ringing or connection. The requested address is stable, but any friendly-name alias is an explicitly configured trust mapping, not independent proof of the underlying remote handle. `requestedMedia` is separate from observed `media` in call state/events; until observed, media is null. Neither label nor connection verification proves an active video stream or remote camera-on state.
+
+**Outgoing video connection evidence:** paired manual ringing/answered captures established that End/Camera/Microphone exist while ringing, but `ParticipantGridView`, the remote participant button and `LocalParticipantView` appear after answer. Video call tracking now uses those measured structures independently of `VideoLayout.swift`'s rotation-specific fullscreen action. It requires one complete window, one grid/local preview pair and one grid-sized sibling remote participant whose whole description matches the configured recipient/alias. Two consecutive complete observations of the same window and peer establish `call.connected` with `evidence: "stable_identity_matched_video_participants"`. An uncertain read, ringing layout or changed context breaks preconnection stability. The auxiliary duration-like text was never validated as an elapsed call timer and is no longer parsed or required for video. Audio retains its advancing-duration gate.
+
+This is empirical local UI evidence, not a native telephony API or proof that the remote camera is on. Neither URL launch, generic controls, a lone window nor one participant observation is sufficient. Unsupported/ambiguous layouts remain gated. The call tracker does not activate, hover or reveal controls to observe connection.
+
+Native read-only `status` and initial snapshots include `videoCallDiagnostics: {observation, connectionGate}`: one cached fixed-code observation, not a history or a fresh AX probe. Codes distinguish ringing, identity-matched participants, layout/peer/window rejection, waiting for a second stable participant observation, verified video state and retained failure. The diagnostic object contains no identities, UI text, raw values, window IDs or paths; ordinary status fields still contain their existing private call details. **Do not use `inspect` to obtain these diagnostics:** it forces reconciliation and returns private AX trees, and reconciliation can perform routing/call actions. Pi's existing `facetime_status` tool remains its coordinator summary; these extra codes are in the native socket `status` result, not newly forwarded to the model.
+
+Synthetic regression fixtures now mirror the paired ringing/answered captures without timer text or fullscreen actions. They cover stable participant gating, hover-hidden controls, ambiguity, identity/window changes, retained failures and audio regressions. No incoming-answer, camera, rotation/follow, sharing or routing behavior is changed. Automated end-to-end behavior still requires manual validation after installation.
 
 ### Connected
 
 The tested outgoing ringing description looks like `FaceTime Audio…`. After answer, a duration appears (`0:00`, `0:02`, ...).
 
-The service emits `call.unknown` on the first duration observation and verified `call.connected` only after the duration advances. A hangup/mute/keypad control can already exist while ringing and is never sufficient connection evidence.
+For audio, the service emits `call.unknown` on the first duration observation and verified `call.connected` only after the duration advances. Outgoing video emits `call.unknown` on the first complete identity-matched participant scene and connects only after the same scene is observed again. A hangup/mute/keypad control can already exist while ringing and is never sufficient connection evidence.
 
 ### Ended and failed
 
 The state machine observes panel disappearance and participant-left notifications. Disappearance requires two missing reconciliations unless a participant-left notification is present. A successful local `End` action marks a requested local hangup; actual UI disappearance supplies subsequent ending evidence.
 
-Failure handling includes call UI startup timeout, ringing timeout, observed unapproved recipient identity, and some failure text exposed inside the call banner. Timeout handling attempts `End` where available; it never kills FaceTime as a workaround. Remote decline versus early cancellation, network failure, and unknown disappearance cannot always be distinguished reliably. Account/network errors outside the observed banner are not comprehensively classified.
+Failure handling includes call UI startup timeout, ringing timeout, observed unapproved recipient identity, and some failure text exposed inside the call banner. Audio timeout/End handling is unchanged. Outgoing video End requires the unique current video window and tracked displayed identity, with one enabled AXPress End control freshly reacquired; it is attempted at most once per request, including timeout handling. A changed peer/window is never ended automatically. Video launch errors, connection timeouts and changed contexts emit one unverified `call.failed` with `status: "retained"` and retain `callId` in `phase: "unconfirmed"`, keeping new requests/config reload blocked until two complete observations establish UI disappearance. Disappearance then emits terminal `call.ended` before releasing ownership, so connected consumers do not stay busy on a silently discarded call. Pi closes voice but retains its owned target, reports unconfirmed/busy, rejects new calls before voice preparation, and permits one explicit hangup request (native video End is independently one-shot). A same-instance/same-ID reconnect keeps that latch; unrelated snapshots are never adopted, and an idle snapshot clears missed terminal state without inventing an event. Unreadable/ambiguous trees do not count as disappearance; they break the missing-observation streak. A surviving confirmation is not silently cancelled and late timer advancement cannot reconnect a failed request. Manual UI review may be necessary. The service never kills FaceTime as a workaround. Remote decline versus early cancellation, network failure, and unknown disappearance cannot always be distinguished reliably. Account/network errors outside the observed banner are not comprehensively classified.
 
 Persistent `Call Failed` banners do not create repeated new calls. Only one call is tracked; multi-call/conference scenarios and localization need further work.
 
@@ -355,8 +372,9 @@ With `--snapshot-dir`, snapshots are saved at semantic call transitions, not eve
 | `ScreenSharing.swift` | Call-guarded entire-display sharing through Control Center, state verification, and Allow Control disabling. |
 | `VideoLayout.swift` | Socket-only local-preview rotation, video-context guards, and observed aspect-ratio events. |
 | `VideoFollow.swift` | Per-peer calibration preferences and allowlist-gated automatic matching with debounce, feedback suppression, and failure latch. |
-| `FaceTimeCalling.swift` | Explicit FaceTime Audio URL launch. |
-| `CallState.swift` | Call/confirmation extraction and local state tracking. |
+| `FaceTimeCalling.swift` | Strict outgoing media validation and explicit audio/video URL selection/launch. |
+| `CallState.swift` | Audio/banner advancing-duration tracking, stable video participant gating and retained unconfirmed ownership. |
+| `VideoCallUI.swift` | Pure scoped video confirmation, ringing/participant observation and End selectors. |
 | `SocketServer.swift` | Single-instance Unix socket, bounded NDJSON framing, and nonblocking client output. |
 | `ServiceMetadata.swift` | Service instance/sequence metadata and incoming allowlist flags. |
 | `ServiceRun.swift` | Per-start lifecycle token that prevents stopped services from executing stale callbacks. |

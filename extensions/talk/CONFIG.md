@@ -67,6 +67,12 @@ A LaunchServices app may not inherit the terminal's `PI_CODING_AGENT_DIR`. Its d
 
 The bridge reports its selected config path in status. Pi refuses FaceTime mode when paths differ. No IPC command silently repoints the bridge to another policy file.
 
+## Webcam presentations
+
+No new setting or call/audio permission is added. `present_to_webcam` shows intended public text/local PNG/JPEG in this session's already opted-in, ready webcam/HUD publisher, independently of Talk/FaceTime. Call end/standby alone does not clear it; explicit clear/replace, sharing off, session/branch change, disconnect/stale or app quit does. `present_to_call` remains strict verified-call-only with its original call lifetime; both use one panel/cache. Neither enables sharing, launches apps or starts calls. Success means published, not necessarily seen. Off HUD/opacity do not hide the panel; overlap masking preserves configured settings and updates. Captions stay call-scoped. Assets follow `dirname(actual HUD socket)/presentations`; source paths never enter the wire. Later Pi `/reload` exposes the new tool; updated Electron main/validator bundles need a full restart (and authorized packaging if using an older prebuilt app). See [usage/privacy/schema migration](webcam/docs/call-presentations.md).
+
+Source-only and untested/unbuilt: a later Pi `/reload` and sharing re-enable plus explicit Electron rebuild/package and full restart are needed. Main/preload/validator changes cannot be loaded by renderer HMR. This feature needs no Swift/native rebuild.
+
 ## Migration
 
 The extension migrates an existing canonical version-1 `talk.json` to version 2 after strictly validating it. It preserves physical selections and all FaceTime policy, replaces the old arbitrary virtual microphone/output pair with the fixed UIDs, and saves the exact original bytes in owner-only `talk.json.pre-v2.bak` without overwriting an existing backup.

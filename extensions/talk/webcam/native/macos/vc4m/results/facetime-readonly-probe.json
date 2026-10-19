@@ -1,0 +1,19 @@
+{
+  "readOnly": true,
+  "commands": [
+    "video.status"
+  ],
+  "appliedToLocalProbeOnly": [
+    "9:16"
+  ],
+  "status": {
+    "enabled": true,
+    "connected": true,
+    "available": true,
+    "observedAspect": "9:16",
+    "desiredAspect": "9:16",
+    "state": "following",
+    "error": null
+  },
+  "realFaceTimeMutations": 0
+}

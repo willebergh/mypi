@@ -7,7 +7,7 @@ test("FaceTime tools exist only in mode, preserve other tools, and reject stale 
   const definitions = new Map<string, any>();
   let active = ["read", "bash"];
   let mode: any;
-  const calls: string[] = [], reasons: (string | undefined)[] = [], displays: string[] = [];
+  const calls: string[] = [], reasons: (string | undefined)[] = [], displays: string[] = [], media: unknown[] = [];
   const pi = {
     registerTool(tool: any) { definitions.set(tool.name, tool); },
     getActiveTools: () => [...active],
@@ -18,7 +18,7 @@ test("FaceTime tools exist only in mode, preserve other tools, and reject stale 
   assert.equal(definitions.size, 0);
   mode = {
     status: () => ({ enabled: true, phase: "standby" }),
-    call: async (reason?: string) => { calls.push("owner"); reasons.push(reason); return { submitted: true }; },
+    call: async (reason?: string, requestedMedia?: string) => { calls.push("owner"); reasons.push(reason); media.push(requestedMedia); return { submitted: true, requestedMedia }; },
     answer: async () => { calls.push("answer"); return {}; },
     hangup: async () => { calls.push("hangup"); return {}; },
     shareScreen: async (display: string) => { calls.push("share"); displays.push(display); return { active: true, display, remoteControl: false, verified: true }; },
@@ -34,6 +34,18 @@ test("FaceTime tools exist only in mode, preserve other tools, and reject stale 
   await call.execute("t", { reason: "Report the verified test result." }, undefined);
   assert.deepEqual(calls, ["owner"]);
   assert.deepEqual(reasons, ["Report the verified test result."]);
+  assert.deepEqual(media, ["audio"]);
+  assert.deepEqual(call.parameters.properties.media.anyOf.map((entry: any) => entry.const), ["audio", "video"]);
+  const video = await call.execute("v", { reason: "Discuss known context.", media: "video" });
+  assert.equal(video.details.requestedMedia, "video");
+  await call.execute("a", { reason: "Discuss known context.", media: "audio" });
+  assert.deepEqual(media, ["audio", "video", "audio"]);
+  for (const invalid of [null, "", "VIDEO", "auto", false, 1, {}, []]) {
+    await assert.rejects(call.execute("invalid", { reason: "Topic", media: invalid }), /media must be audio or video/);
+  }
+  assert.equal(calls.length, 3, "invalid media never reaches the mode");
+  assert.match(call.description, /explicitly user-requested/);
+  assert.match(call.description, /remote camera/);
   const status = await definitions.get("facetime_status").execute("s", {}, undefined);
   assert.equal(status.details.phase, "standby");
   const abort = new AbortController(); abort.abort();
@@ -65,5 +77,5 @@ test("FaceTime tools exist only in mode, preserve other tools, and reject stale 
   assert.ok([...definitions.values()].every(tool => tool.exposure === "hidden"));
   await assert.rejects(call.execute("stale", { reason: "test" }), /require \/talk facetime/);
   for (const tool of [share, stop]) await assert.rejects(tool.execute("stale", { display: "Studio Display" }), /require \/talk facetime/);
-  assert.deepEqual(calls, ["owner", "share", "stop-sharing"]);
+  assert.deepEqual(calls, ["owner", "owner", "owner", "share", "stop-sharing"]);
 });

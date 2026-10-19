@@ -4,7 +4,7 @@ import { mkdtempSync, mkdirSync, readdirSync, rmSync, existsSync, symlinkSync } 
 import { join } from "node:path";
 import { randomUUID } from "node:crypto";
 import { createFaceTimeMode, acquireFaceTimeLease, type FaceTimeModeOptions, type FaceTimeVoiceHandle } from "../extensions/talk/facetime-mode.ts";
-import { type FaceTimeClient, type FaceTimeClientCallbacks, type FaceTimeRecord, type FaceTimeSnapshot } from "../extensions/talk/facetime-client.ts";
+import { faceTimeSemanticEvent, type FaceTimeClient, type FaceTimeClientCallbacks, type FaceTimeRecord, type FaceTimeSnapshot } from "../extensions/talk/facetime-client.ts";
 
 function deferred<T>() {
   let resolve!: (value: T) => void;
@@ -16,7 +16,7 @@ const flush = async () => { for (let n = 0; n < 12; n++) await new Promise<void>
 const routing = { input: "Agent Output", output: "Agent Input" };
 function snapshot(call: FaceTimeRecord = { phase: "idle" }, extra: FaceTimeRecord = {}): FaceTimeSnapshot {
   return { type: "snapshot", protocolVersion: 1, serviceInstanceId: "service-a", seq: 0,
-    permission: { trusted: true }, configuration: { autoAnswer: false }, call: { phase: "idle", ...call }, ...extra } as FaceTimeSnapshot;
+    permission: { trusted: true }, configuration: { autoAnswer: false, callMedia: ["audio", "video"] }, call: { phase: "idle", ...call }, ...extra } as FaceTimeSnapshot;
 }
 class Voice implements FaceTimeVoiceHandle {
   gates: boolean[] = [];
@@ -87,6 +87,27 @@ async function connected(t: test.TestContext) {
   return h;
 }
 
+// Presentation integration source only; NOT executed in this change.
+test("read-only presentation authority requires owned verified call evidence and invalidates synchronously", async (t) => {
+  const edges: boolean[] = [];
+  const h = harness(t, { onAuthorityChange() { edges.push(!!h.mode.presentationAuthority?.()); } });
+  await h.mode.enable();
+  assert.equal(h.mode.status().connected, true, "service connectivity alone is not call authority");
+  assert.equal(h.mode.presentationAuthority?.(), undefined);
+  h.client.event("call.incoming", { allowed: true });
+  await flush();
+  assert.equal(h.mode.presentationAuthority?.(), undefined);
+  h.client.event("call.connected", { verified: true });
+  const authority = h.mode.presentationAuthority?.();
+  assert.ok(authority?.callKey);
+  const commands = h.client.commands.length;
+  assert.deepEqual(h.mode.presentationAuthority?.(), authority);
+  assert.equal(h.client.commands.length, commands, "accessor performs no requests or call/audio mutations");
+  h.client.disconnect();
+  assert.equal(h.mode.presentationAuthority?.(), undefined);
+  assert.equal(edges.at(-1), false, "short disconnect is observed before any heartbeat");
+});
+
 test("only owned terminal call events notify context, once and after voice teardown starts", async (t) => {
   const ended: FaceTimeRecord[] = [];
   const h = harness(t, { onCallEnded(event) {
@@ -121,6 +142,7 @@ test("FaceTime enable checks policy/routing before standby and never takes over 
   for (const initial of [
     snapshot({ phase: "incoming", callId: "manual", allowed: true }),
     snapshot({ phase: "connected", callId: "manual", verified: true }),
+    snapshot({ phase: "unconfirmed", callId: "manual-video", requestedMedia: "video", verified: false }),
     snapshot(undefined, { permission: { trusted: false } }),
     snapshot(undefined, { configuration: { autoAnswer: true } }),
     snapshot(undefined, { configuration: {} }),
@@ -225,7 +247,9 @@ test("FaceTime outgoing prepares gated voice, sends once and only adopts its res
   await h.mode.enable();
   await h.mode.call();
   assert.deepEqual(h.voices[0].gates, [false]);
-  assert.deepEqual(h.client.mutations(), [{ command: "call", args: { to: "synthetic@example.invalid" } }]);
+  assert.deepEqual(h.client.mutations(), [{ command: "call", args: { to: "synthetic@example.invalid", media: "audio" } }]);
+  assert.equal(h.mode.status().requestedMedia, "audio");
+  assert.equal(h.mode.status().observedMedia, undefined);
   await assert.rejects(h.mode.call(), /already active/);
   h.client.event("call.dialing", { callId: "outgoing-1", direction: "outgoing" });
   h.client.event("call.connected", { callId: "outgoing-1", direction: "outgoing", verified: true });
@@ -235,6 +259,329 @@ test("FaceTime outgoing prepares gated voice, sends once and only adopts its res
   assert.equal(h.voices[0].stops, 1);
   assert.equal(h.mode.status().phase, "standby");
   assert.equal(h.client.mutations().length, 1);
+});
+
+test("explicit video propagates once to the sole owner, and submission does not open audio or claim observed video", async (t) => {
+  const h = harness(t);
+  await h.mode.enable();
+  const result = await h.mode.call("Discuss the known result.", "video");
+  assert.deepEqual(result, { callId: "outgoing-1", requestedMedia: "video" });
+  assert.deepEqual(h.client.mutations(), [{ command: "call", args: { to: "synthetic@example.invalid", media: "video" } }]);
+  assert.equal(h.mode.status().requestedMedia, "video");
+  assert.equal(h.mode.status().observedMedia, undefined);
+  assert.deepEqual(h.voices[0].gates, [false]);
+  assert.equal(h.voices[0].introductions, 0);
+  h.client.event("call.connected", { callId: "outgoing-1", direction: "outgoing", media: "video", verified: false });
+  assert.equal(h.voices[0].gates.at(-1), false);
+  h.client.event("call.connected", { callId: "outgoing-1", direction: "outgoing", media: "video", verified: true });
+  assert.equal(h.voices[0].gates.at(-1), true);
+  assert.equal(h.mode.status().observedMedia, "video");
+  assert.equal(h.voices[0].introductions, 1);
+  h.client.disconnect();
+  h.client.reconnect({ phase: "connected", callId: "outgoing-1", media: "video", verified: true });
+  await flush();
+  assert.equal(h.voices[1].gates.at(-1), true);
+  assert.equal(h.voices[1].introductions, 0);
+  assert.equal(h.mode.status().requestedMedia, "video");
+  assert.equal(h.client.mutations().length, 1);
+});
+
+test("retained failure metadata survives both semantic filters without exposing UI trees", () => {
+  const event = { event: "call.failed", callId: "video-1", status: "retained", verified: false,
+    evidence: "video_connection_timeout_review_ui_manually", tree: "private" };
+  const filtered = faceTimeSemanticEvent(faceTimeSemanticEvent(event)!);
+  assert.deepEqual(filtered, { event: event.event, callId: event.callId, status: "retained", verified: false, evidence: event.evidence });
+});
+
+for (const wasConnected of [false, true]) {
+  test(`retained video failure closes voice, stays busy, and preserves one hangup target (connected=${wasConnected})`, async (t) => {
+    const ended: FaceTimeRecord[] = [];
+    const h = harness(t, { onCallEnded: event => ended.push(event) });
+    await h.mode.enable();
+    await h.mode.call("Topic", "video");
+    const target = { callId: "outgoing-1", direction: "outgoing", media: "video" };
+    if (wasConnected) h.client.event("call.connected", { ...target, verified: true });
+    h.client.event("call.failed", { ...target, status: "retained", verified: false });
+    assert.equal(h.voices[0].gates.at(-1), false);
+    assert.equal(h.voices[0].stops, 1);
+    assert.equal(h.signals[0].aborted, true);
+    assert.equal(h.mode.status().phase, "unconfirmed");
+    assert.equal(h.mode.status().callId, target.callId);
+    assert.equal(h.mode.status().requestedMedia, "video");
+    assert.equal(h.mode.status().audioEnabled, false);
+    assert.deepEqual(ended, [], "nonterminal failure must not wake the agent as an ended call");
+    for (const media of ["audio", "video"] as const) await assert.rejects(h.mode.call("No retry", media), /already active/);
+    await assert.rejects(h.mode.shareScreen("Synthetic Display"), /owned, verified connected call/);
+    h.client.event("call.failed", { ...target, status: "retained", verified: false });
+    h.client.event("call.connected", { ...target, verified: true });
+    await flush();
+    assert.equal(h.voices.length, 1, "late timer evidence cannot restart voice");
+    assert.equal(h.voices[0].stops, 1);
+    assert.equal(h.mode.status().phase, "unconfirmed");
+    await Promise.all([h.mode.hangup(), h.mode.hangup()]);
+    assert.deepEqual(h.client.mutations().map(c => c.command), ["call", "hangup"]);
+    assert.equal(h.mode.status().phase, "unconfirmed", "hangup acceptance is not terminal evidence");
+    h.client.event("call.ended", { ...target, status: "terminal", verified: false, evidence: "unconfirmed_video_ui_disappeared" });
+    assert.equal(h.mode.status().phase, "standby");
+    assert.equal(h.mode.status().callId, undefined);
+    assert.equal(ended.length, 1);
+    h.client.event("call.ended", { ...target, status: "terminal" });
+    assert.equal(ended.length, 1);
+    await h.mode.call();
+    assert.equal(h.voices.length, 2, "only terminal evidence permits a fresh explicit call");
+  });
+}
+
+for (const failureBeforeSnapshot of [false, true]) {
+  test(`same-owned unconfirmed reconnect never resumes voice (failure event received=${failureBeforeSnapshot})`, async (t) => {
+    const h = harness(t);
+    await h.mode.enable();
+    await h.mode.call("Topic", "video");
+    const target = { callId: "outgoing-1", direction: "outgoing", requestedMedia: "video", verified: false };
+    if (failureBeforeSnapshot) h.client.event("call.failed", { ...target, status: "retained" });
+    h.client.disconnect();
+    h.client.reconnect({ ...target, phase: "unconfirmed" });
+    await flush();
+    assert.equal(h.mode.status().phase, "unconfirmed");
+    assert.equal(h.mode.status().requestedMedia, "video");
+    assert.equal(h.voices.length, 1);
+    assert.equal(h.voices[0].stops, 1);
+    await assert.rejects(h.mode.call(), /already active/);
+    // A failed ID remains latched even if later snapshot/timer evidence claims connection.
+    h.client.disconnect();
+    h.client.reconnect({ ...target, phase: "connected", verified: true });
+    await flush();
+    h.client.event("call.connected", { ...target, verified: true });
+    assert.equal(h.mode.status().phase, "unconfirmed");
+    assert.equal(h.voices.length, 1);
+    await h.mode.hangup();
+    h.client.disconnect();
+    h.client.reconnect({ ...target, phase: "unconfirmed" });
+    await flush();
+    await h.mode.hangup();
+    assert.deepEqual(h.client.mutations().map(c => c.command), ["call", "hangup"], "never replay End on reconnect");
+    h.client.event("call.ended", { ...target, status: "terminal" });
+    assert.equal(h.mode.status().phase, "standby");
+    assert.equal(h.mode.status().callId, undefined);
+  });
+}
+
+for (const responseOutcome of ["accepted", "rejected"] as const) {
+  test(`retained video failure preceding ${responseOutcome} response adopts only a response-owned ID`, async (t) => {
+    const ended: FaceTimeRecord[] = [];
+    const h = harness(t, { onCallEnded: event => ended.push(event) });
+    await h.mode.enable();
+    const response = deferred<unknown>();
+    h.client.handler = async command => command === "call" ? response.promise : {};
+    const calling = h.mode.call("Topic", "video").catch(error => error);
+    await flush();
+    h.client.event("call.failed", { callId: "early-video", direction: "outgoing", status: "retained", verified: false });
+    if (responseOutcome === "accepted") response.resolve({ callId: "early-video", status: "retained", error: "synthetic launch failure" });
+    else response.reject(new Error("synthetic video launch failure; review manually"));
+    assert.ok(await calling instanceof Error);
+    assert.equal(h.mode.status().phase, "unconfirmed");
+    assert.equal(h.mode.status().callId, "early-video");
+    assert.equal(h.voices[0].stops, 1);
+    await assert.rejects(h.mode.call(), /already active/);
+    for (let attempt = 0; attempt < 2; attempt++) {
+      if (responseOutcome === "accepted") await h.mode.hangup();
+      else await assert.rejects(h.mode.hangup(), /synthetic video launch failure/);
+    }
+    assert.deepEqual(h.client.mutations().map(c => c.command), responseOutcome === "accepted" ? ["call", "hangup"] : ["call"],
+      "a missing/rejected response must not authorize an event-only hangup target");
+    h.client.event("call.ended", { callId: "early-video", status: "terminal" });
+    assert.equal(h.mode.status().phase, "standby");
+    assert.equal(ended.length, responseOutcome === "accepted" ? 1 : 0);
+  });
+}
+
+test("retained launch response alone identifies ownership without claiming success", async (t) => {
+  const h = harness(t);
+  await h.mode.enable();
+  h.client.handler = async command => command === "call"
+    ? { callId: "failed-launch", status: "retained", error: "synthetic launch failure" } : {};
+  await assert.rejects(h.mode.call("Topic", "video"), /unconfirmed.*do not retry/);
+  assert.equal(h.mode.status().phase, "unconfirmed");
+  assert.equal(h.mode.status().callId, "failed-launch");
+  assert.equal(h.voices[0].stops, 1);
+  assert.equal(h.voices[0].gates.includes(true), false);
+  await h.mode.hangup();
+  assert.deepEqual(h.client.mutations().map(c => c.command), ["call", "hangup"]);
+});
+
+test("unrelated retained event during submission never overrides the response-owned target", async (t) => {
+  const ended: FaceTimeRecord[] = [];
+  const h = harness(t, { onCallEnded: event => ended.push(event) });
+  await h.mode.enable();
+  const response = deferred<unknown>();
+  h.client.handler = async command => command === "call" ? response.promise : {};
+  const calling = h.mode.call("Topic", "video").catch(error => error);
+  await flush();
+  h.client.event("call.failed", { callId: "unrelated-video", direction: "outgoing", status: "retained", verified: false });
+  response.resolve({ callId: "our-response-id" });
+  const outcome = await calling;
+  assert.ok(outcome instanceof Error);
+  assert.match(outcome.message, /refusing takeover/);
+  assert.equal(h.mode.status().phase, "unconfirmed");
+  assert.equal(h.mode.status().requestedMedia, undefined);
+  await h.mode.hangup();
+  assert.deepEqual(h.client.mutations().map(c => c.command), ["call"]);
+  h.client.event("call.ended", { callId: "unrelated-video", status: "terminal" });
+  assert.equal(h.mode.status().phase, "standby");
+  assert.deepEqual(ended, []);
+});
+
+for (const source of ["event", "snapshot", "replacement", "service-restart"] as const) {
+  test(`unowned retained video from ${source} blocks calls without adopting or hanging up`, async (t) => {
+    const ended: FaceTimeRecord[] = [];
+    const h = harness(t, { onCallEnded: event => ended.push(event) });
+    await h.mode.enable();
+    if (source === "replacement" || source === "service-restart") await h.mode.call("Topic", "video");
+    const callId = source === "service-restart" ? "outgoing-1" : "unowned-video";
+    if (source === "event") h.client.event("call.failed", { callId, direction: "outgoing", status: "retained", verified: false });
+    else {
+      h.client.disconnect();
+      h.client.reconnect({ phase: "unconfirmed", callId, direction: "outgoing", requestedMedia: "video", verified: false },
+        source === "service-restart" ? { serviceInstanceId: "service-b" } : {});
+    }
+    await flush();
+    assert.equal(h.mode.status().phase, "unconfirmed");
+    assert.equal(h.mode.status().requestedMedia, undefined, "snapshot intent must not imply local ownership");
+    const before = h.voices.length;
+    await assert.rejects(h.mode.call(), /already active/);
+    await h.mode.hangup();
+    assert.equal(h.voices.length, before);
+    assert.equal(h.client.mutations().some(c => c.command === "hangup"), false);
+    h.client.event("call.ended", { callId, status: "terminal", verified: false });
+    assert.equal(h.mode.status().phase, "standby");
+    assert.equal(h.mode.status().callId, undefined);
+    assert.deepEqual(ended, []);
+  });
+}
+
+test("retained video failure before submission never adopts the unrelated target", async (t) => {
+  const preparation = deferred<FaceTimeVoiceHandle>();
+  const h = harness(t, { prepareVoice: () => preparation.promise });
+  await h.mode.enable();
+  const calling = h.mode.call("Topic", "video").catch(error => error);
+  await flush();
+  h.client.event("call.failed", { callId: "manual-video", direction: "outgoing", status: "retained", verified: false });
+  assert.ok(await calling instanceof Error);
+  const late = new Voice();
+  preparation.resolve(late);
+  await flush();
+  assert.equal(late.stops, 1);
+  assert.equal(late.gates.includes(true), false);
+  assert.equal(h.mode.status().phase, "unconfirmed");
+  assert.equal(h.mode.status().requestedMedia, undefined);
+  await h.mode.hangup();
+  assert.deepEqual(h.client.mutations(), []);
+});
+
+test("failed retained hangup is attempted once, never retried after reconnect or disable", async (t) => {
+  const h = harness(t);
+  await h.mode.enable();
+  await h.mode.call("Topic", "video");
+  h.client.event("call.failed", { callId: "outgoing-1", direction: "outgoing", status: "retained", verified: false });
+  h.client.handler = async command => {
+    if (command === "hangup") throw new Error("synthetic End already attempted; review manually");
+    return { devices: [
+      { section: "input", name: routing.input, selected: true, enabled: true },
+      { section: "output", name: routing.output, selected: true, enabled: true },
+    ] };
+  };
+  await assert.rejects(h.mode.hangup(), /already attempted/);
+  h.client.disconnect();
+  h.client.reconnect({ phase: "unconfirmed", callId: "outgoing-1", verified: false });
+  await flush();
+  await assert.rejects(h.mode.hangup(), /already attempted/);
+  assert.equal(h.mode.status().phase, "unconfirmed");
+  await h.mode.disable();
+  assert.deepEqual(h.client.mutations().map(c => c.command), ["call", "hangup"]);
+});
+
+test("idle reconnect clears a retained call when its terminal event was missed", async (t) => {
+  const ended: FaceTimeRecord[] = [];
+  const h = harness(t, { onCallEnded: event => ended.push(event) });
+  await h.mode.enable();
+  await h.mode.call("Topic", "video");
+  h.client.event("call.failed", { callId: "outgoing-1", direction: "outgoing", status: "retained", verified: false });
+  h.client.disconnect();
+  h.client.reconnect();
+  await flush();
+  assert.equal(h.mode.status().phase, "standby");
+  assert.equal(h.mode.status().callId, undefined);
+  await h.mode.hangup();
+  assert.deepEqual(h.client.mutations().map(c => c.command), ["call"]);
+  assert.deepEqual(ended, [], "snapshots are reconciliation, not invented terminal events");
+  await h.mode.call();
+  assert.equal(h.voices.length, 2);
+});
+
+test("invalid media and video against an old bridge fail before preparing voice or dialing", async (t) => {
+  const h = harness(t);
+  await h.mode.enable();
+  for (const media of [null, "", "VIDEO", "unknown", true, {}, []]) {
+    await assert.rejects(h.mode.call("Topic", media as any), /media must be audio or video/);
+  }
+  assert.equal(h.voices.length, 0);
+  assert.deepEqual(h.client.mutations(), []);
+  const old = harness(t, {}, snapshot({}, { configuration: { autoAnswer: false } }));
+  await old.mode.enable();
+  await assert.rejects(old.mode.call("Topic", "video"), /updated native bridge/);
+  assert.equal(old.voices.length, 0);
+  assert.deepEqual(old.client.mutations(), []);
+  await old.mode.call();
+  assert.equal(old.client.mutations()[0].args?.media, "audio", "legacy audio remains available");
+});
+
+for (const requested of ["audio", "video"] as const) {
+  test(`observed media mismatch never enables audio for requested ${requested} or retries`, async (t) => {
+    const h = harness(t);
+    await h.mode.enable();
+    await h.mode.call("Topic", requested);
+    h.client.event("call.connected", { callId: "outgoing-1", direction: "outgoing", media: requested === "audio" ? "video" : "audio", verified: true });
+    assert.equal(h.voices[0].gates.includes(true), false);
+    assert.equal(h.voices[0].introductions, 0);
+    assert.match(h.mode.status().error!, /differs from requested/);
+    assert.equal(h.client.mutations().length, 1);
+  });
+}
+
+test("video cancelled during preparation never submits a call and stops a late voice handle", async (t) => {
+  const preparation = deferred<FaceTimeVoiceHandle>();
+  const h = harness(t, { prepareVoice: () => preparation.promise });
+  await h.mode.enable();
+  const calling = h.mode.call("Topic", "video").catch(error => error);
+  await flush();
+  await h.mode.hangup();
+  const late = new Voice();
+  preparation.resolve(late);
+  const outcome = await calling;
+  await flush();
+  assert.ok(outcome instanceof Error);
+  assert.match(outcome.message, /cancelled/);
+  assert.equal(late.stops, 1);
+  assert.ok(late.gates.every(value => !value));
+  assert.deepEqual(h.client.mutations(), []);
+});
+
+test("video submission timeout remains unknown and is never retried or downgraded during disable", async (t) => {
+  const h = harness(t);
+  await h.mode.enable();
+  const response = deferred<unknown>();
+  h.client.handler = async command => command === "call" ? response.promise : {};
+  const calling = h.mode.call("Topic", "video").catch(error => error);
+  await flush();
+  const ending = h.mode.disable();
+  response.reject(new Error("FaceTime call timed out; outcome unknown"));
+  await ending;
+  const outcome = await calling;
+  assert.ok(outcome instanceof Error);
+  assert.match(outcome.message, /outcome unknown/);
+  assert.deepEqual(h.client.mutations(), [{ command: "call", args: { to: "synthetic@example.invalid", media: "video" } }]);
+  assert.ok(h.voices[0].gates.every(value => !value));
+  assert.equal(h.leases, 0);
 });
 
 test("outgoing introductions require verified audio and happen once per call, not per reconnect", async (t) => {
@@ -248,7 +595,7 @@ test("outgoing introductions require verified audio and happen once per call, no
   h.client.event("call.connected", { callId: "outgoing-1", direction: "outgoing", verified: true });
   assert.equal(h.voices[0].introductions, 1);
   assert.deepEqual(h.voices[0].purposes, ["The requested checks passed; share the verified result."]);
-  assert.deepEqual(h.client.mutations()[0].args, { to: "synthetic@example.invalid" }, "purpose stays local, not in the Swift dial command");
+  assert.deepEqual(h.client.mutations()[0].args, { to: "synthetic@example.invalid", media: "audio" }, "purpose stays local, not in the Swift dial command");
   h.client.event("call.connected", { callId: "outgoing-1", direction: "outgoing", verified: true });
   assert.equal(h.voices[0].introductions, 1);
   h.client.disconnect();

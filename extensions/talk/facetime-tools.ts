@@ -1,9 +1,10 @@
 import { Type } from "@earendil-works/pi-ai";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
+import { faceTimeCallMedia, type FaceTimeCallMedia } from "./facetime-call.ts";
 
 interface FaceTimeControls {
   status(): { enabled: boolean };
-  call(purpose?: string): Promise<unknown>;
+  call(purpose?: string, media?: FaceTimeCallMedia): Promise<unknown>;
   answer(): Promise<unknown>;
   hangup(): Promise<unknown>;
   shareScreen(display: string): Promise<unknown>;
@@ -47,13 +48,15 @@ export function createFaceTimeTools(pi: Pick<ExtensionAPI, "registerTool" | "get
     }
     pi.registerTool({
       name: "facetime_call", label: "FaceTime call", ...visibility,
-      description: "Place one explicitly requested FaceTime Audio call to the sole owner configured locally in talk.json. Supply the concise purpose you want to discuss after the user acknowledges the greeting, using known context/verified facts only. The recipient is never model-selected. Prepare virtual Talk audio first. A successful submission is not proof of connection. Do not dial autonomously or retry after timeout/disconnect.",
+      description: "Place one explicitly user-requested FaceTime audio or video call to the sole owner configured locally in talk.json. Media defaults to audio; select video only when explicitly requested, never silently upgrade or downgrade. Supply the concise purpose to discuss after the user acknowledges the greeting, using known context/verified facts only. The recipient is never model-selected. Prepare virtual Talk audio first. Submission is not proof of connection, an active video stream, or remote camera state. Video confirmation fails closed if its media is ambiguous. Do not dial autonomously or retry after timeout/disconnect.",
       ...{ annotations: { readOnlyHint: false, destructiveHint: true, idempotentHint: false, openWorldHint: true } },
       parameters: Type.Object({
+        media: Type.Optional(Type.Union([Type.Literal("audio"), Type.Literal("video")], { description: "Requested call media. Omit for audio; video requires an explicit user request. No fallback to a different medium." })),
         reason: Type.String({ description: "Why you are calling the configured owner: known result, update, or question to present after their first reply. Not a new task or approval. Concise, at most 300 UTF-8 bytes.", minLength: 1, maxLength: 240 }),
       }),
       async execute(_id, params, signal) {
-        const result = await requireMode(signal).call(params.reason);
+        const mode = requireMode(signal);
+        const result = await mode.call(params.reason, faceTimeCallMedia(params.media));
         return { content: [{ type: "text", text: JSON.stringify(result ?? {}) }], details: result };
       },
     });

@@ -1,4 +1,5 @@
 import path from "node:path";
+import { randomUUID } from "node:crypto";
 import { StringEnum, Type } from "@earendil-works/pi-ai";
 import {
   getMarkdownTheme,
@@ -31,10 +32,15 @@ import {
   type ScheduledOperation,
 } from "./runner.ts";
 
+import {
+  SUBAGENT_COMPLETION_TYPE, createSubagentOperation, subagentStartDetails,
+  subagentCompletionDetails, type SubagentOperation,
+} from "./protocol.ts";
+
 const TOOL_NAME = "subagent";
 const LIST_TOOL_NAME = "list_subagents";
 const CANCEL_TOOL_NAME = "cancel_subagents";
-const COMPLETION_MESSAGE_TYPE = "background-subagent-result";
+const COMPLETION_MESSAGE_TYPE = SUBAGENT_COMPLETION_TYPE;
 const MAX_TASKS = 16;
 const MAX_CONCURRENCY = 4;
 const MAX_CANCEL_IDS = 64;
@@ -98,10 +104,12 @@ interface CompletionMessageDetails {
 }
 
 interface PendingCompletion extends CompletionMessageDetails {
+  operation: SubagentOperation;
   content: string;
 }
 
 interface ActiveJob {
+  operation: SubagentOperation;
   state: SubagentState;
   controller: AbortController;
   scheduled: ScheduledOperation<SubagentState>;
@@ -262,10 +270,7 @@ export default function subagentsExtension(pi: ExtensionAPI) {
           customType: COMPLETION_MESSAGE_TYPE,
           content: completion.content,
           display: true,
-          details: {
-            deliveryId: completion.deliveryId,
-            state: cloneSubagentState(completion.state),
-          },
+          details: subagentCompletionDetails(completion.operation, completion.deliveryId, cloneSubagentState(completion.state)),
         },
         { deliverAs: "steer", triggerTurn: true },
       );
@@ -280,8 +285,9 @@ export default function subagentsExtension(pi: ExtensionAPI) {
     job.state = cloneSubagentState(finalState);
     publish();
 
-    const deliveryId = `${job.state.id}:${job.state.endedAt ?? Date.now()}`;
+    const deliveryId = randomUUID();
     const completion: PendingCompletion = {
+      operation: job.operation,
       deliveryId,
       state: cloneSubagentState(job.state),
       content: formatSubagentCompletion(job.state),
@@ -298,6 +304,7 @@ export default function subagentsExtension(pi: ExtensionAPI) {
     state: SubagentState,
     ctx: ExtensionContext,
     parentModel: string | undefined,
+    operation: SubagentOperation,
   ) => {
     const controller = new AbortController();
     const resolvedTask: SubagentTask = {
@@ -330,6 +337,7 @@ export default function subagentsExtension(pi: ExtensionAPI) {
     );
 
     job = {
+      operation,
       state,
       controller,
       scheduled,
@@ -480,7 +488,8 @@ export default function subagentsExtension(pi: ExtensionAPI) {
     ],
     parameters: SubagentParameters,
     executionMode: "sequential",
-    async execute(_toolCallId, parameters, _signal, _onUpdate, ctx) {
+    async execute(toolCallId, parameters, _signal, _onUpdate, ctx) {
+      const operation = createSubagentOperation(toolCallId);
       const tasks = parameters.tasks as SubagentTask[];
       const parentModel = ctx.model
         ? `${ctx.model.provider}/${ctx.model.id}`
@@ -495,7 +504,7 @@ export default function subagentsExtension(pi: ExtensionAPI) {
         createSubagentState(nextId++, task, defaults),
       );
       for (const [index, state] of started.entries()) {
-        startJob(tasks[index], state, ctx, parentModel);
+        startJob(tasks[index], state, ctx, parentModel, operation);
       }
       publish();
 
@@ -508,7 +517,7 @@ export default function subagentsExtension(pi: ExtensionAPI) {
       ].join("\n");
       return {
         content: [{ type: "text", text }],
-        details: { states: started.map(cloneSubagentState) },
+        details: subagentStartDetails(operation, started.map(cloneSubagentState)),
       };
     },
     renderCall(args, theme) {

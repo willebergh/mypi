@@ -1,0 +1,10 @@
+node_modules/
+.vite/
+out/
+artifacts/
+.DS_Store
+*.log
+native/**/build/
+*.provisionprofile
+*.mobileprovision
+.env.camera

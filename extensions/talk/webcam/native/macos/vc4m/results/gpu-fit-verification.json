@@ -1,0 +1,34 @@
+[
+  {
+    "source": [
+      720,
+      1280
+    ],
+    "output": [
+      1280,
+      720
+    ],
+    "activeX": [
+      437,
+      842
+    ],
+    "orientation": "preserved",
+    "gpuMs": 0.13325
+  },
+  {
+    "source": [
+      1280,
+      720
+    ],
+    "output": [
+      1280,
+      720
+    ],
+    "activeX": [
+      0,
+      1279
+    ],
+    "orientation": "preserved",
+    "gpuMs": 0.058666
+  }
+]

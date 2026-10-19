@@ -1,0 +1,2430 @@
+{
+  "packaged": true,
+  "platform": "darwin",
+  "arch": "arm64",
+  "versions": {
+    "node": "24.22.0",
+    "acorn": "8.18.0",
+    "ada": "4.0.0",
+    "amaro": "1.1.11",
+    "ares": "1.34.8",
+    "brotli": "1.2.0",
+    "cldr": "48.0",
+    "icu": "78.2",
+    "llhttp": "9.4.3",
+    "merve": "1.2.2",
+    "modules": "149",
+    "napi": "10",
+    "nbytes": "0.1.4",
+    "ncrypto": "0.0.1",
+    "nghttp2": "1.70.0",
+    "nghttp3": "",
+    "ngtcp2": "",
+    "openssl": "0.0.0",
+    "simdjson": "4.6.11",
+    "simdutf": "7.7.0",
+    "sqlite": "3.53.4",
+    "tz": "2026d",
+    "undici": "7.29.1",
+    "unicode": "17.0",
+    "uv": "1.52.1",
+    "uvwasi": "0.0.23",
+    "v8": "15.2.124.43-electron.0",
+    "zlib": "1.3.2.1-motley",
+    "zstd": "1.6.0",
+    "electron": "44.9.0",
+    "chrome": "152.0.7977.167"
+  },
+  "gpu": {
+    "auxAttributes": {
+      "amdSwitchable": false,
+      "canSupportThreadedTextureMailbox": false,
+      "displayType": "ANGLE_METAL",
+      "glExtensions": "GL_AMD_performance_monitor GL_ANGLE_base_vertex_base_instance_shader_builtin GL_ANGLE_blob_cache GL_ANGLE_client_arrays GL_ANGLE_clip_cull_distance GL_ANGLE_compressed_texture_etc GL_ANGLE_depth_texture GL_ANGLE_framebuffer_blit GL_ANGLE_framebuffer_multisample GL_ANGLE_get_serialized_context_string GL_ANGLE_get_tex_level_parameter GL_ANGLE_instanced_arrays GL_ANGLE_memory_size GL_ANGLE_pack_reverse_row_order GL_ANGLE_polygon_mode GL_ANGLE_program_binary_readiness_query GL_ANGLE_program_cache_control GL_ANGLE_provoking_vertex GL_ANGLE_renderability_validation GL_ANGLE_request_extension GL_ANGLE_rgbx_internal_format GL_ANGLE_robust_client_memory GL_ANGLE_shader_pixel_local_storage GL_ANGLE_shader_pixel_local_storage_coherent GL_ANGLE_stencil_texturing GL_ANGLE_texture_compression_dxt3 GL_ANGLE_texture_compression_dxt5 GL_ANGLE_texture_multisample GL_ANGLE_translated_shader_source GL_APPLE_clip_distance GL_ARM_rgba8 GL_CHROMIUM_bind_generates_resource GL_CHROMIUM_bind_uniform_location GL_CHROMIUM_copy_texture GL_CHROMIUM_lose_context GL_EXT_base_instance GL_EXT_blend_func_extended GL_EXT_blend_minmax GL_EXT_clip_control GL_EXT_color_buffer_float GL_EXT_color_buffer_half_float GL_EXT_compressed_ETC1_RGB8_sub_texture GL_EXT_conservative_depth GL_EXT_debug_label GL_EXT_debug_marker GL_EXT_depth_clamp GL_EXT_discard_framebuffer GL_EXT_disjoint_timer_query GL_EXT_draw_buffers GL_EXT_draw_buffers_indexed GL_EXT_draw_elements_base_vertex GL_EXT_float_blend GL_EXT_frag_depth GL_EXT_instanced_arrays GL_EXT_map_buffer_range GL_EXT_multisampled_render_to_texture GL_EXT_occlusion_query_boolean GL_EXT_polygon_offset_clamp GL_EXT_pvrtc_sRGB GL_EXT_read_format_bgra GL_EXT_render_snorm GL_EXT_robustness GL_EXT_sRGB GL_EXT_shader_texture_lod GL_EXT_texture_compression_bptc GL_EXT_texture_compression_dxt1 GL_EXT_texture_compression_rgtc GL_EXT_texture_compression_s3tc_srgb GL_EXT_texture_filter_anisotropic GL_EXT_texture_format_BGRA8888 GL_EXT_texture_mirror_clamp_to_edge GL_EXT_texture_norm16 GL_EXT_texture_rg GL_EXT_texture_sRGB_R8 GL_EXT_texture_sRGB_RG8 GL_EXT_texture_shadow_lod GL_EXT_texture_storage GL_IMG_texture_compression_pvrtc GL_KHR_debug GL_KHR_parallel_shader_compile GL_KHR_robustness GL_KHR_texture_compression_astc_hdr GL_KHR_texture_compression_astc_ldr GL_KHR_texture_compression_astc_sliced_3d GL_MESA_framebuffer_flip_y GL_NV_fence GL_NV_framebuffer_blit GL_NV_pixel_buffer_object GL_NV_shader_noperspective_interpolation GL_OES_EGL_image GL_OES_EGL_sync GL_OES_compressed_ETC1_RGB8_texture GL_OES_depth24 GL_OES_depth32 GL_OES_depth_texture GL_OES_draw_buffers_indexed GL_OES_draw_elements_base_vertex GL_OES_element_index_uint GL_OES_fbo_render_mipmap GL_OES_get_program_binary GL_OES_mapbuffer GL_OES_packed_depth_stencil GL_OES_required_internalformat GL_OES_rgb8_rgba8 GL_OES_sample_variables GL_OES_shader_multisample_interpolation GL_OES_standard_derivatives GL_OES_surfaceless_context GL_OES_texture_3D GL_OES_texture_float GL_OES_texture_float_linear GL_OES_texture_half_float GL_OES_texture_half_float_linear GL_OES_texture_npot GL_OES_texture_stencil8 GL_OES_vertex_array_object GL_QCOM_render_shared_exponent ",
+      "glImplementationParts": "(gl=egl-angle,angle=metal)",
+      "glRenderer": "ANGLE (Apple, ANGLE Metal Renderer: Apple M4, Version 26.6.1 (Build 25G76))",
+      "glResetNotificationStrategy": 33362,
+      "glVendor": "Google Inc. (Apple)",
+      "glVersion": "OpenGL ES 3.0 (ANGLE 2.1.28505 git hash: 485f9d6cb8c6)",
+      "inProcessGpu": false,
+      "initializationTime": 48.215,
+      "isAsan": false,
+      "isClangCoverage": false,
+      "jpegDecodeAcceleratorSupported": false,
+      "maxMsaaSamples": "4",
+      "optimus": false,
+      "passthroughCmdDecoder": true,
+      "pixelShaderVersion": "3.00",
+      "sandboxed": true,
+      "skiaBackendType": "GraphiteDawnMetal",
+      "subpixelFontRendering": true,
+      "targetCpuBits": 64,
+      "vertexShaderVersion": "3.00",
+      "videoDecodeAcceleratorSupportedProfile": {
+        "encrypted_only": false,
+        "maxResolutionHeight": 8192,
+        "maxResolutionWidth": 8192,
+        "minResolutionHeight": 16,
+        "minResolutionWidth": 16,
+        "profile": 29
+      },
+      "visibilityCallbackCallCount": 0
+    },
+    "gpuDevice": [
+      {
+        "active": true,
+        "deviceId": 0,
+        "deviceString": "ANGLE (Apple, ANGLE Metal Renderer: Apple M4, Version 26.6.1 (Build 25G76))",
+        "driverVendor": "Apple",
+        "driverVersion": "26.6.1",
+        "gpuPreference": 0,
+        "vendorId": 4203,
+        "vendorString": "Google Inc. (Apple)"
+      }
+    ],
+    "machineModelName": "Mac",
+    "machineModelVersion": "16.10"
+  },
+  "timingNotes": "CPU import/encode/commit; GPU command start/end timestamps; completion is main-process paint handler to JS callback. No Three.js render-to-consumer latency measurement.",
+  "camera": {
+    "installation": "unknown",
+    "activation": "unknown",
+    "requestState": "idle",
+    "error": "",
+    "instructions": "Signing required: host and camera extension must be signed by the same Apple Development/Developer ID team. Unsigned/ad-hoc builds cannot install a camera.",
+    "teamID": "",
+    "bundled": true,
+    "canRequest": false
+  },
+  "overheadComparison": {
+    "baseline": {
+      "label": "shared-baseline-no-native",
+      "frames": 300,
+      "seconds": 10.001047291999999,
+      "fps": 29.996858453011704,
+      "mainCpuPercentOneCore": 0.8532906355543709,
+      "mainMemoryBefore": {
+        "rss": 156123136,
+        "heapTotal": 6291456,
+        "heapUsed": 4137016,
+        "external": 2703865,
+        "arrayBuffers": 0
+      },
+      "mainMemoryAfter": {
+        "rss": 134234112,
+        "heapTotal": 6815744,
+        "heapUsed": 4491892,
+        "external": 2705972,
+        "arrayBuffers": 0
+      },
+      "processed": 0,
+      "processedFPS": 0,
+      "cpuSubmitMs": null,
+      "gpuMs": null,
+      "completionMs": null,
+      "status": {
+        "state": "running",
+        "fps": 29.965552110707904,
+        "frameCount": 332,
+        "width": 1280,
+        "height": 720,
+        "mode": "shared-texture",
+        "sharedTexture": "Native GPU handle received (darwin)",
+        "error": null,
+        "native": {
+          "state": "disabled",
+          "device": "",
+          "framesReceived": 0,
+          "framesProcessed": 0,
+          "droppedFrames": 0,
+          "failedFrames": 0,
+          "inFlight": 0,
+          "maxInFlight": 0,
+          "lastSequence": 0,
+          "orderingErrors": 0,
+          "averageCpuSubmitMs": 0,
+          "averageGpuMs": null,
+          "averageNativeLatencyMs": 0,
+          "averageCompletionMs": 0,
+          "cpuSubmitTotalMs": 0,
+          "gpuTotalMs": 0,
+          "gpuTimedFrames": 0,
+          "completionTotalMs": 0,
+          "error": null,
+          "resources": {
+            "inFlight": 0,
+            "sourceRetains": 0,
+            "destinationTextures": 0,
+            "readbackCount": 0
+          }
+        }
+      },
+      "windowCount": 2,
+      "appMetrics": [
+        {
+          "cpu": {
+            "cumulativeCPUUsage": 0.532922,
+            "percentCPUUsage": 0.08608021414916711,
+            "idleWakeupsPerSecond": 18
+          },
+          "pid": 73181,
+          "type": "Browser",
+          "creationTime": 1792330649532.952,
+          "memory": {
+            "workingSetSize": 131360,
+            "peakWorkingSetSize": 157968
+          },
+          "sandboxed": false
+        },
+        {
+          "cpu": {
+            "cumulativeCPUUsage": 1.928927,
+            "percentCPUUsage": 1.36273038814855,
+            "idleWakeupsPerSecond": 228
+          },
+          "pid": 73319,
+          "type": "GPU",
+          "creationTime": 1792330655609.765,
+          "serviceName": "GPU",
+          "memory": {
+            "workingSetSize": 153424,
+            "peakWorkingSetSize": 190704
+          },
+          "sandboxed": true
+        },
+        {
+          "cpu": {
+            "cumulativeCPUUsage": 0.053925,
+            "percentCPUUsage": 0.00038794976050601445,
+            "idleWakeupsPerSecond": 0
+          },
+          "pid": 73320,
+          "type": "Utility",
+          "creationTime": 1792330655612.715,
+          "serviceName": "network.mojom.NetworkService",
+          "name": "Network Service",
+          "memory": {
+            "workingSetSize": 41136,
+            "peakWorkingSetSize": 48160
+          },
+          "sandboxed": true
+        },
+        {
+          "cpu": {
+            "cumulativeCPUUsage": 1.714562,
+            "percentCPUUsage": 0.8221866491756596,
+            "idleWakeupsPerSecond": 31
+          },
+          "pid": 73321,
+          "type": "Tab",
+          "creationTime": 1792330655742.852,
+          "memory": {
+            "workingSetSize": 199280,
+            "peakWorkingSetSize": 246976
+          },
+          "sandboxed": true
+        },
+        {
+          "cpu": {
+            "cumulativeCPUUsage": 1.050923,
+            "percentCPUUsage": 0.41023608482163876,
+            "idleWakeupsPerSecond": 16
+          },
+          "pid": 73346,
+          "type": "Tab",
+          "creationTime": 1792330656661.646,
+          "memory": {
+            "workingSetSize": 168800,
+            "peakWorkingSetSize": 227696
+          },
+          "sandboxed": true
+        }
+      ]
+    },
+    "enabled": {
+      "label": "native-visible",
+      "frames": 300,
+      "seconds": 10.001759292000001,
+      "fps": 29.99472305236917,
+      "mainCpuPercentOneCore": 2.2574228534033387,
+      "mainMemoryBefore": {
+        "rss": 149061632,
+        "heapTotal": 7077888,
+        "heapUsed": 4724188,
+        "external": 2706228,
+        "arrayBuffers": 0
+      },
+      "mainMemoryAfter": {
+        "rss": 149782528,
+        "heapTotal": 6029312,
+        "heapUsed": 4819580,
+        "external": 2708628,
+        "arrayBuffers": 0
+      },
+      "processed": 300,
+      "processedFPS": 29.99472305236917,
+      "cpuSubmitMs": 0.23538306333333348,
+      "gpuMs": 0.08740998804569244,
+      "completionMs": 0.8141255833332677,
+      "status": {
+        "state": "running",
+        "fps": 29.98329807365775,
+        "frameCount": 332,
+        "width": 1280,
+        "height": 720,
+        "mode": "shared-texture",
+        "sharedTexture": "Native GPU handle received (darwin)",
+        "error": null,
+        "native": {
+          "state": "running",
+          "device": "Apple M4",
+          "framesReceived": 332,
+          "framesProcessed": 332,
+          "droppedFrames": 0,
+          "failedFrames": 0,
+          "inFlight": 0,
+          "maxInFlight": 1,
+          "lastSequence": 332,
+          "orderingErrors": 0,
+          "averageCpuSubmitMs": 0.2409938554216869,
+          "averageGpuMs": 0.08910654269787202,
+          "averageNativeLatencyMs": 0.7992481114457824,
+          "averageCompletionMs": 0.8260934036144103,
+          "cpuSubmitTotalMs": 80.00996000000005,
+          "gpuTotalMs": 29.583372175693512,
+          "gpuTimedFrames": 332,
+          "completionTotalMs": 274.2630099999842,
+          "error": null,
+          "resources": {
+            "inFlight": 0,
+            "sourceRetains": 0,
+            "destinationTextures": 1,
+            "readbackCount": 0
+          }
+        }
+      },
+      "windowCount": 2,
+      "appMetrics": [
+        {
+          "cpu": {
+            "cumulativeCPUUsage": 0.843877,
+            "percentCPUUsage": 0.22621771526696377,
+            "idleWakeupsPerSecond": 26
+          },
+          "pid": 73181,
+          "type": "Browser",
+          "creationTime": 1792330649532.952,
+          "memory": {
+            "workingSetSize": 146272,
+            "peakWorkingSetSize": 157968
+          },
+          "sandboxed": false
+        },
+        {
+          "cpu": {
+            "cumulativeCPUUsage": 3.491629,
+            "percentCPUUsage": 1.2636389958803564,
+            "idleWakeupsPerSecond": 212
+          },
+          "pid": 73319,
+          "type": "GPU",
+          "creationTime": 1792330655609.765,
+          "serviceName": "GPU",
+          "memory": {
+            "workingSetSize": 136864,
+            "peakWorkingSetSize": 190704
+          },
+          "sandboxed": true
+        },
+        {
+          "cpu": {
+            "cumulativeCPUUsage": 0.054872,
+            "percentCPUUsage": 0.00010798029359641865,
+            "idleWakeupsPerSecond": 0
+          },
+          "pid": 73320,
+          "type": "Utility",
+          "creationTime": 1792330655612.715,
+          "serviceName": "network.mojom.NetworkService",
+          "name": "Network Service",
+          "memory": {
+            "workingSetSize": 41776,
+            "peakWorkingSetSize": 48160
+          },
+          "sandboxed": true
+        },
+        {
+          "cpu": {
+            "cumulativeCPUUsage": 2.495791,
+            "percentCPUUsage": 0.6832300185966526,
+            "idleWakeupsPerSecond": 34
+          },
+          "pid": 73321,
+          "type": "Tab",
+          "creationTime": 1792330655742.852,
+          "memory": {
+            "workingSetSize": 147408,
+            "peakWorkingSetSize": 246976
+          },
+          "sandboxed": true
+        },
+        {
+          "cpu": {
+            "cumulativeCPUUsage": 1.026724,
+            "percentCPUUsage": 0.382895074413799,
+            "idleWakeupsPerSecond": 17
+          },
+          "pid": 73606,
+          "type": "Tab",
+          "creationTime": 1792330668120.089,
+          "memory": {
+            "workingSetSize": 154816,
+            "peakWorkingSetSize": 227104
+          },
+          "sandboxed": true
+        }
+      ]
+    },
+    "note": "Sequential measurements, not simultaneous or statistically controlled; see per-process CPU and memory samples."
+  },
+  "nativeBound": "Error: Bridge is busy: only one submit may be in flight",
+  "nativeFrameVerification": {
+    "sequences": [
+      334,
+      358
+    ],
+    "hashes": [
+      "df3324819eb70ead1c3185f482f4b9df75c82bc3483d551cf62d156b0c06d2c2",
+      "54821a867f8c1d0175956d84e2654d6bca34dbba7ad7feb1539613132f89d700"
+    ],
+    "sourceMatchesOutput": [
+      true,
+      true
+    ],
+    "bytes": 3686400,
+    "darkest": 3,
+    "brightest": 196.66666666666666
+  },
+  "editor": {
+    "previewBounds": {
+      "x": 129.328125,
+      "y": 172,
+      "width": 853.328125,
+      "height": 479.984375
+    },
+    "previewStats": {
+      "fps": 59.9520383693046,
+      "drawCalls": 61,
+      "triangles": 211008
+    },
+    "initialPose": [
+      0.15000000000000002,
+      3.1000000000000005,
+      7.8500000000000005
+    ],
+    "orbitPose": [
+      -6.24314318545261,
+      5.4365937839747875,
+      3.496196628885749
+    ],
+    "zoomPose": [
+      -5.811165239069569,
+      5.261423927735004,
+      3.1373668168418987
+    ],
+    "resetPose": [
+      0.14999879191455398,
+      3.100000345167272,
+      7.849999979067161
+    ],
+    "slider": {
+      "config": {
+        "eyeGlowIntensity": 1.25,
+        "eyeGlowColor": "#ffc16b",
+        "eyeSquint": 0.92,
+        "casingTint": "#8c887b",
+        "casingWear": 0.7,
+        "hoodieColor": "#14181c",
+        "idleIntensity": 0.65,
+        "roomIntensity": 1,
+        "warmCoolBalance": 0.58
+      },
+      "revision": 1,
+      "outputRevision": 1
+    },
+    "synchronized": {
+      "config": {
+        "eyeGlowIntensity": 2,
+        "eyeGlowColor": "#91ffb1",
+        "eyeSquint": 0.35,
+        "casingTint": "#6c8194",
+        "casingWear": 0.25,
+        "hoodieColor": "#26384b",
+        "idleIntensity": 1,
+        "roomIntensity": 1.3,
+        "warmCoolBalance": 0.15
+      },
+      "revision": 2,
+      "outputRevision": 2
+    },
+    "outputWebContentsID": 3,
+    "restoredRevision": 3,
+    "checks": "Real orbit/zoom/reset and squint input; all nine settings acknowledged after output render; no output restart; invalid/sender IPC rejected"
+  },
+  "sharedTexture": {
+    "pixelFormat": "bgra",
+    "codedSize": {
+      "width": 1280,
+      "height": 720
+    },
+    "handleTypes": [
+      "ioSurface"
+    ]
+  },
+  "continuousOperation": {
+    "seconds": 30,
+    "before": {
+      "state": "running",
+      "device": "Apple M4",
+      "framesReceived": 1100,
+      "framesProcessed": 1062,
+      "droppedFrames": 38,
+      "failedFrames": 0,
+      "inFlight": 0,
+      "maxInFlight": 1,
+      "lastSequence": 1100,
+      "orderingErrors": 0,
+      "averageCpuSubmitMs": 0.24060430320150653,
+      "averageGpuMs": 0.0813187791908023,
+      "averageNativeLatencyMs": 1.197721360640299,
+      "averageCompletionMs": 1.2243234623352304,
+      "cpuSubmitTotalMs": 255.52176999999992,
+      "gpuTotalMs": 86.36054350063205,
+      "gpuTimedFrames": 1062,
+      "completionTotalMs": 1300.2315170000147,
+      "error": null,
+      "resources": {
+        "inFlight": 0,
+        "sourceRetains": 0,
+        "destinationTextures": 1,
+        "readbackCount": 2
+      }
+    },
+    "after": {
+      "state": "running",
+      "device": "Apple M4",
+      "framesReceived": 2091,
+      "framesProcessed": 2051,
+      "droppedFrames": 40,
+      "failedFrames": 0,
+      "inFlight": 0,
+      "maxInFlight": 1,
+      "lastSequence": 2091,
+      "orderingErrors": 0,
+      "averageCpuSubmitMs": 0.260603756704047,
+      "averageGpuMs": 0.07898499053979664,
+      "averageNativeLatencyMs": 1.0541463510482696,
+      "averageCompletionMs": 1.0803140692344435,
+      "cpuSubmitTotalMs": 534.4983050000004,
+      "gpuTotalMs": 161.9982155971229,
+      "gpuTimedFrames": 2051,
+      "completionTotalMs": 2215.724155999844,
+      "error": null,
+      "resources": {
+        "inFlight": 0,
+        "sourceRetains": 0,
+        "destinationTextures": 1,
+        "readbackCount": 2
+      }
+    }
+  },
+  "nativeFinal": {
+    "state": "idle",
+    "device": "Apple M4",
+    "framesReceived": 2091,
+    "framesProcessed": 2051,
+    "droppedFrames": 40,
+    "failedFrames": 0,
+    "inFlight": 0,
+    "maxInFlight": 1,
+    "lastSequence": 2091,
+    "orderingErrors": 0,
+    "averageCpuSubmitMs": 0.260603756704047,
+    "averageGpuMs": 0.07898499053979664,
+    "averageNativeLatencyMs": 1.0541463510482696,
+    "averageCompletionMs": 1.0803140692344435,
+    "cpuSubmitTotalMs": 534.4983050000004,
+    "gpuTotalMs": 161.9982155971229,
+    "gpuTimedFrames": 2051,
+    "completionTotalMs": 2215.724155999844,
+    "error": null,
+    "resources": {
+      "inFlight": 0,
+      "sourceRetains": 0,
+      "destinationTextures": 0,
+      "readbackCount": 2
+    }
+  },
+  "nativeRestartCycles": [
+    {
+      "state": "idle",
+      "device": "Apple M4",
+      "framesReceived": 9,
+      "framesProcessed": 7,
+      "droppedFrames": 2,
+      "failedFrames": 0,
+      "inFlight": 0,
+      "maxInFlight": 1,
+      "lastSequence": 9,
+      "orderingErrors": 0,
+      "averageCpuSubmitMs": 0.4579107142857143,
+      "averageGpuMs": 0.06797018327883311,
+      "averageNativeLatencyMs": 16.0795,
+      "averageCompletionMs": 16.12323814285836,
+      "cpuSubmitTotalMs": 3.205375,
+      "gpuTotalMs": 0.4757912829518318,
+      "gpuTimedFrames": 7,
+      "completionTotalMs": 112.86266700000851,
+      "error": null,
+      "resources": {
+        "inFlight": 0,
+        "sourceRetains": 0,
+        "destinationTextures": 0,
+        "readbackCount": 2
+      }
+    },
+    {
+      "state": "idle",
+      "device": "Apple M4",
+      "framesReceived": 10,
+      "framesProcessed": 10,
+      "droppedFrames": 0,
+      "failedFrames": 0,
+      "inFlight": 0,
+      "maxInFlight": 1,
+      "lastSequence": 10,
+      "orderingErrors": 0,
+      "averageCpuSubmitMs": 0.24586230000000003,
+      "averageGpuMs": 0.0702208373695612,
+      "averageNativeLatencyMs": 1.3658664999999999,
+      "averageCompletionMs": 1.396191500000714,
+      "cpuSubmitTotalMs": 2.4586230000000002,
+      "gpuTotalMs": 0.702208373695612,
+      "gpuTimedFrames": 10,
+      "completionTotalMs": 13.961915000007139,
+      "error": null,
+      "resources": {
+        "inFlight": 0,
+        "sourceRetains": 0,
+        "destinationTextures": 0,
+        "readbackCount": 2
+      }
+    },
+    {
+      "state": "idle",
+      "device": "Apple M4",
+      "framesReceived": 12,
+      "framesProcessed": 11,
+      "droppedFrames": 1,
+      "failedFrames": 0,
+      "inFlight": 0,
+      "maxInFlight": 1,
+      "lastSequence": 12,
+      "orderingErrors": 0,
+      "averageCpuSubmitMs": 0.24179172727272727,
+      "averageGpuMs": 0.07438253272663463,
+      "averageNativeLatencyMs": 1.0114356363636363,
+      "averageCompletionMs": 1.0310304545471973,
+      "cpuSubmitTotalMs": 2.659709,
+      "gpuTotalMs": 0.818207859992981,
+      "gpuTimedFrames": 11,
+      "completionTotalMs": 11.341335000019171,
+      "error": null,
+      "resources": {
+        "inFlight": 0,
+        "sourceRetains": 0,
+        "destinationTextures": 0,
+        "readbackCount": 2
+      }
+    },
+    {
+      "state": "idle",
+      "device": "Apple M4",
+      "framesReceived": 9,
+      "framesProcessed": 9,
+      "droppedFrames": 0,
+      "failedFrames": 0,
+      "inFlight": 0,
+      "maxInFlight": 1,
+      "lastSequence": 9,
+      "orderingErrors": 0,
+      "averageCpuSubmitMs": 0.21090255555555554,
+      "averageGpuMs": 0.09048150645362006,
+      "averageNativeLatencyMs": 0.9803377777777779,
+      "averageCompletionMs": 1.0009165555545931,
+      "cpuSubmitTotalMs": 1.8981229999999998,
+      "gpuTotalMs": 0.8143335580825806,
+      "gpuTimedFrames": 9,
+      "completionTotalMs": 9.008248999991338,
+      "error": null,
+      "resources": {
+        "inFlight": 0,
+        "sourceRetains": 0,
+        "destinationTextures": 0,
+        "readbackCount": 2
+      }
+    },
+    {
+      "state": "idle",
+      "device": "Apple M4",
+      "framesReceived": 10,
+      "framesProcessed": 10,
+      "droppedFrames": 0,
+      "failedFrames": 0,
+      "inFlight": 0,
+      "maxInFlight": 1,
+      "lastSequence": 10,
+      "orderingErrors": 0,
+      "averageCpuSubmitMs": 0.22505429999999998,
+      "averageGpuMs": 0.12254570610821247,
+      "averageNativeLatencyMs": 0.9370917999999999,
+      "averageCompletionMs": 0.9577124999996158,
+      "cpuSubmitTotalMs": 2.250543,
+      "gpuTotalMs": 1.2254570610821247,
+      "gpuTimedFrames": 10,
+      "completionTotalMs": 9.577124999996158,
+      "error": null,
+      "resources": {
+        "inFlight": 0,
+        "sourceRetains": 0,
+        "destinationTextures": 0,
+        "readbackCount": 2
+      }
+    },
+    {
+      "state": "idle",
+      "device": "Apple M4",
+      "framesReceived": 10,
+      "framesProcessed": 10,
+      "droppedFrames": 0,
+      "failedFrames": 0,
+      "inFlight": 0,
+      "maxInFlight": 1,
+      "lastSequence": 10,
+      "orderingErrors": 0,
+      "averageCpuSubmitMs": 0.1870376,
+      "averageGpuMs": 0.08396659977734089,
+      "averageNativeLatencyMs": 0.8720292000000001,
+      "averageCompletionMs": 0.8915251999991597,
+      "cpuSubmitTotalMs": 1.870376,
+      "gpuTotalMs": 0.8396659977734089,
+      "gpuTimedFrames": 10,
+      "completionTotalMs": 8.915251999991597,
+      "error": null,
+      "resources": {
+        "inFlight": 0,
+        "sourceRetains": 0,
+        "destinationTextures": 0,
+        "readbackCount": 2
+      }
+    },
+    {
+      "state": "idle",
+      "device": "Apple M4",
+      "framesReceived": 10,
+      "framesProcessed": 10,
+      "droppedFrames": 0,
+      "failedFrames": 0,
+      "inFlight": 0,
+      "maxInFlight": 1,
+      "lastSequence": 10,
+      "orderingErrors": 0,
+      "averageCpuSubmitMs": 0.1842832,
+      "averageGpuMs": 0.07055425085127354,
+      "averageNativeLatencyMs": 0.8842332999999998,
+      "averageCompletionMs": 0.9024998999972013,
+      "cpuSubmitTotalMs": 1.842832,
+      "gpuTotalMs": 0.7055425085127354,
+      "gpuTimedFrames": 10,
+      "completionTotalMs": 9.024998999972013,
+      "error": null,
+      "resources": {
+        "inFlight": 0,
+        "sourceRetains": 0,
+        "destinationTextures": 0,
+        "readbackCount": 2
+      }
+    },
+    {
+      "state": "idle",
+      "device": "Apple M4",
+      "framesReceived": 10,
+      "framesProcessed": 10,
+      "droppedFrames": 0,
+      "failedFrames": 0,
+      "inFlight": 0,
+      "maxInFlight": 1,
+      "lastSequence": 10,
+      "orderingErrors": 0,
+      "averageCpuSubmitMs": 0.16959169999999998,
+      "averageGpuMs": 0.11120839044451714,
+      "averageNativeLatencyMs": 0.8765667,
+      "averageCompletionMs": 0.8933126000032644,
+      "cpuSubmitTotalMs": 1.695917,
+      "gpuTotalMs": 1.1120839044451714,
+      "gpuTimedFrames": 10,
+      "completionTotalMs": 8.933126000032644,
+      "error": null,
+      "resources": {
+        "inFlight": 0,
+        "sourceRetains": 0,
+        "destinationTextures": 0,
+        "readbackCount": 2
+      }
+    }
+  ],
+  "stopDuringInFlight": {
+    "drainMs": 2.4480840000032913,
+    "status": {
+      "state": "stopped",
+      "fps": 0,
+      "frameCount": 2,
+      "width": 1280,
+      "height": 720,
+      "mode": "shared-texture",
+      "sharedTexture": "Native GPU handle received (darwin)",
+      "error": null,
+      "native": {
+        "state": "idle",
+        "device": "Apple M4",
+        "framesReceived": 2,
+        "framesProcessed": 2,
+        "droppedFrames": 0,
+        "failedFrames": 0,
+        "inFlight": 0,
+        "maxInFlight": 1,
+        "lastSequence": 2,
+        "orderingErrors": 0,
+        "averageCpuSubmitMs": 0.204021,
+        "averageGpuMs": 0.07568742148578167,
+        "averageNativeLatencyMs": 1.5363545,
+        "averageCompletionMs": 1.5545620000048075,
+        "cpuSubmitTotalMs": 0.408042,
+        "gpuTotalMs": 0.15137484297156334,
+        "gpuTimedFrames": 2,
+        "completionTotalMs": 3.109124000009615,
+        "error": null,
+        "resources": {
+          "inFlight": 0,
+          "sourceRetains": 0,
+          "destinationTextures": 0,
+          "readbackCount": 2
+        }
+      }
+    }
+  },
+  "concurrentTransitions": "start/stop/start serialized; stop during native submission drained",
+  "preloadIPC": "getStatus/stop/start passed; Quit exercised after report",
+  "samples": [
+    {
+      "label": "shared-baseline-no-native",
+      "frames": 300,
+      "seconds": 10.001047291999999,
+      "fps": 29.996858453011704,
+      "mainCpuPercentOneCore": 0.8532906355543709,
+      "mainMemoryBefore": {
+        "rss": 156123136,
+        "heapTotal": 6291456,
+        "heapUsed": 4137016,
+        "external": 2703865,
+        "arrayBuffers": 0
+      },
+      "mainMemoryAfter": {
+        "rss": 134234112,
+        "heapTotal": 6815744,
+        "heapUsed": 4491892,
+        "external": 2705972,
+        "arrayBuffers": 0
+      },
+      "processed": 0,
+      "processedFPS": 0,
+      "cpuSubmitMs": null,
+      "gpuMs": null,
+      "completionMs": null,
+      "status": {
+        "state": "running",
+        "fps": 29.965552110707904,
+        "frameCount": 332,
+        "width": 1280,
+        "height": 720,
+        "mode": "shared-texture",
+        "sharedTexture": "Native GPU handle received (darwin)",
+        "error": null,
+        "native": {
+          "state": "disabled",
+          "device": "",
+          "framesReceived": 0,
+          "framesProcessed": 0,
+          "droppedFrames": 0,
+          "failedFrames": 0,
+          "inFlight": 0,
+          "maxInFlight": 0,
+          "lastSequence": 0,
+          "orderingErrors": 0,
+          "averageCpuSubmitMs": 0,
+          "averageGpuMs": null,
+          "averageNativeLatencyMs": 0,
+          "averageCompletionMs": 0,
+          "cpuSubmitTotalMs": 0,
+          "gpuTotalMs": 0,
+          "gpuTimedFrames": 0,
+          "completionTotalMs": 0,
+          "error": null,
+          "resources": {
+            "inFlight": 0,
+            "sourceRetains": 0,
+            "destinationTextures": 0,
+            "readbackCount": 0
+          }
+        }
+      },
+      "windowCount": 2,
+      "appMetrics": [
+        {
+          "cpu": {
+            "cumulativeCPUUsage": 0.532922,
+            "percentCPUUsage": 0.08608021414916711,
+            "idleWakeupsPerSecond": 18
+          },
+          "pid": 73181,
+          "type": "Browser",
+          "creationTime": 1792330649532.952,
+          "memory": {
+            "workingSetSize": 131360,
+            "peakWorkingSetSize": 157968
+          },
+          "sandboxed": false
+        },
+        {
+          "cpu": {
+            "cumulativeCPUUsage": 1.928927,
+            "percentCPUUsage": 1.36273038814855,
+            "idleWakeupsPerSecond": 228
+          },
+          "pid": 73319,
+          "type": "GPU",
+          "creationTime": 1792330655609.765,
+          "serviceName": "GPU",
+          "memory": {
+            "workingSetSize": 153424,
+            "peakWorkingSetSize": 190704
+          },
+          "sandboxed": true
+        },
+        {
+          "cpu": {
+            "cumulativeCPUUsage": 0.053925,
+            "percentCPUUsage": 0.00038794976050601445,
+            "idleWakeupsPerSecond": 0
+          },
+          "pid": 73320,
+          "type": "Utility",
+          "creationTime": 1792330655612.715,
+          "serviceName": "network.mojom.NetworkService",
+          "name": "Network Service",
+          "memory": {
+            "workingSetSize": 41136,
+            "peakWorkingSetSize": 48160
+          },
+          "sandboxed": true
+        },
+        {
+          "cpu": {
+            "cumulativeCPUUsage": 1.714562,
+            "percentCPUUsage": 0.8221866491756596,
+            "idleWakeupsPerSecond": 31
+          },
+          "pid": 73321,
+          "type": "Tab",
+          "creationTime": 1792330655742.852,
+          "memory": {
+            "workingSetSize": 199280,
+            "peakWorkingSetSize": 246976
+          },
+          "sandboxed": true
+        },
+        {
+          "cpu": {
+            "cumulativeCPUUsage": 1.050923,
+            "percentCPUUsage": 0.41023608482163876,
+            "idleWakeupsPerSecond": 16
+          },
+          "pid": 73346,
+          "type": "Tab",
+          "creationTime": 1792330656661.646,
+          "memory": {
+            "workingSetSize": 168800,
+            "peakWorkingSetSize": 227696
+          },
+          "sandboxed": true
+        }
+      ]
+    },
+    {
+      "label": "native-visible",
+      "frames": 300,
+      "seconds": 10.001759292000001,
+      "fps": 29.99472305236917,
+      "mainCpuPercentOneCore": 2.2574228534033387,
+      "mainMemoryBefore": {
+        "rss": 149061632,
+        "heapTotal": 7077888,
+        "heapUsed": 4724188,
+        "external": 2706228,
+        "arrayBuffers": 0
+      },
+      "mainMemoryAfter": {
+        "rss": 149782528,
+        "heapTotal": 6029312,
+        "heapUsed": 4819580,
+        "external": 2708628,
+        "arrayBuffers": 0
+      },
+      "processed": 300,
+      "processedFPS": 29.99472305236917,
+      "cpuSubmitMs": 0.23538306333333348,
+      "gpuMs": 0.08740998804569244,
+      "completionMs": 0.8141255833332677,
+      "status": {
+        "state": "running",
+        "fps": 29.98329807365775,
+        "frameCount": 332,
+        "width": 1280,
+        "height": 720,
+        "mode": "shared-texture",
+        "sharedTexture": "Native GPU handle received (darwin)",
+        "error": null,
+        "native": {
+          "state": "running",
+          "device": "Apple M4",
+          "framesReceived": 332,
+          "framesProcessed": 332,
+          "droppedFrames": 0,
+          "failedFrames": 0,
+          "inFlight": 0,
+          "maxInFlight": 1,
+          "lastSequence": 332,
+          "orderingErrors": 0,
+          "averageCpuSubmitMs": 0.2409938554216869,
+          "averageGpuMs": 0.08910654269787202,
+          "averageNativeLatencyMs": 0.7992481114457824,
+          "averageCompletionMs": 0.8260934036144103,
+          "cpuSubmitTotalMs": 80.00996000000005,
+          "gpuTotalMs": 29.583372175693512,
+          "gpuTimedFrames": 332,
+          "completionTotalMs": 274.2630099999842,
+          "error": null,
+          "resources": {
+            "inFlight": 0,
+            "sourceRetains": 0,
+            "destinationTextures": 1,
+            "readbackCount": 0
+          }
+        }
+      },
+      "windowCount": 2,
+      "appMetrics": [
+        {
+          "cpu": {
+            "cumulativeCPUUsage": 0.843877,
+            "percentCPUUsage": 0.22621771526696377,
+            "idleWakeupsPerSecond": 26
+          },
+          "pid": 73181,
+          "type": "Browser",
+          "creationTime": 1792330649532.952,
+          "memory": {
+            "workingSetSize": 146272,
+            "peakWorkingSetSize": 157968
+          },
+          "sandboxed": false
+        },
+        {
+          "cpu": {
+            "cumulativeCPUUsage": 3.491629,
+            "percentCPUUsage": 1.2636389958803564,
+            "idleWakeupsPerSecond": 212
+          },
+          "pid": 73319,
+          "type": "GPU",
+          "creationTime": 1792330655609.765,
+          "serviceName": "GPU",
+          "memory": {
+            "workingSetSize": 136864,
+            "peakWorkingSetSize": 190704
+          },
+          "sandboxed": true
+        },
+        {
+          "cpu": {
+            "cumulativeCPUUsage": 0.054872,
+            "percentCPUUsage": 0.00010798029359641865,
+            "idleWakeupsPerSecond": 0
+          },
+          "pid": 73320,
+          "type": "Utility",
+          "creationTime": 1792330655612.715,
+          "serviceName": "network.mojom.NetworkService",
+          "name": "Network Service",
+          "memory": {
+            "workingSetSize": 41776,
+            "peakWorkingSetSize": 48160
+          },
+          "sandboxed": true
+        },
+        {
+          "cpu": {
+            "cumulativeCPUUsage": 2.495791,
+            "percentCPUUsage": 0.6832300185966526,
+            "idleWakeupsPerSecond": 34
+          },
+          "pid": 73321,
+          "type": "Tab",
+          "creationTime": 1792330655742.852,
+          "memory": {
+            "workingSetSize": 147408,
+            "peakWorkingSetSize": 246976
+          },
+          "sandboxed": true
+        },
+        {
+          "cpu": {
+            "cumulativeCPUUsage": 1.026724,
+            "percentCPUUsage": 0.382895074413799,
+            "idleWakeupsPerSecond": 17
+          },
+          "pid": 73606,
+          "type": "Tab",
+          "creationTime": 1792330668120.089,
+          "memory": {
+            "workingSetSize": 154816,
+            "peakWorkingSetSize": 227104
+          },
+          "sandboxed": true
+        }
+      ]
+    },
+    {
+      "label": "native-minimized",
+      "frames": 150,
+      "seconds": 5.002238708000005,
+      "fps": 29.986573763484593,
+      "mainCpuPercentOneCore": 2.764282315813064,
+      "mainMemoryBefore": {
+        "rss": 194510848,
+        "heapTotal": 7340032,
+        "heapUsed": 5602804,
+        "external": 12758262,
+        "arrayBuffers": 0
+      },
+      "mainMemoryAfter": {
+        "rss": 159760384,
+        "heapTotal": 4980736,
+        "heapUsed": 4181000,
+        "external": 10818277,
+        "arrayBuffers": 0
+      },
+      "processed": 150,
+      "processedFPS": 29.986573763484593,
+      "cpuSubmitMs": 0.29410921333333323,
+      "gpuMs": 0.09674751510222752,
+      "completionMs": 0.8990975266666403,
+      "status": {
+        "state": "running",
+        "fps": 29.95830056211477,
+        "frameCount": 746,
+        "width": 1280,
+        "height": 720,
+        "mode": "shared-texture",
+        "sharedTexture": "Native GPU handle received (darwin)",
+        "error": null,
+        "native": {
+          "state": "running",
+          "device": "Apple M4",
+          "framesReceived": 746,
+          "framesProcessed": 718,
+          "droppedFrames": 28,
+          "failedFrames": 0,
+          "inFlight": 0,
+          "maxInFlight": 1,
+          "lastSequence": 746,
+          "orderingErrors": 0,
+          "averageCpuSubmitMs": 0.23995968384401106,
+          "averageGpuMs": 0.08635388163221912,
+          "averageNativeLatencyMs": 1.3971913746518099,
+          "averageCompletionMs": 1.4234050863509522,
+          "cpuSubmitTotalMs": 172.29105299999995,
+          "gpuTotalMs": 62.00208701193333,
+          "gpuTimedFrames": 718,
+          "completionTotalMs": 1022.0048519999837,
+          "error": null,
+          "resources": {
+            "inFlight": 0,
+            "sourceRetains": 0,
+            "destinationTextures": 1,
+            "readbackCount": 2
+          }
+        }
+      },
+      "windowCount": 2,
+      "appMetrics": [
+        {
+          "cpu": {
+            "cumulativeCPUUsage": 2.059509,
+            "percentCPUUsage": 0.277450155686018,
+            "idleWakeupsPerSecond": 7
+          },
+          "pid": 73181,
+          "type": "Browser",
+          "creationTime": 1792330649532.952,
+          "memory": {
+            "workingSetSize": 156016,
+            "peakWorkingSetSize": 192064
+          },
+          "sandboxed": false
+        },
+        {
+          "cpu": {
+            "cumulativeCPUUsage": 4.972545,
+            "percentCPUUsage": 0.7084181995221173,
+            "idleWakeupsPerSecond": 94
+          },
+          "pid": 73319,
+          "type": "GPU",
+          "creationTime": 1792330655609.765,
+          "serviceName": "GPU",
+          "memory": {
+            "workingSetSize": 119360,
+            "peakWorkingSetSize": 190704
+          },
+          "sandboxed": true
+        },
+        {
+          "cpu": {
+            "cumulativeCPUUsage": 0.055745,
+            "percentCPUUsage": 0,
+            "idleWakeupsPerSecond": 0
+          },
+          "pid": 73320,
+          "type": "Utility",
+          "creationTime": 1792330655612.715,
+          "serviceName": "network.mojom.NetworkService",
+          "name": "Network Service",
+          "memory": {
+            "workingSetSize": 41040,
+            "peakWorkingSetSize": 48160
+          },
+          "sandboxed": true
+        },
+        {
+          "cpu": {
+            "cumulativeCPUUsage": 3.114543,
+            "percentCPUUsage": 0.009883046617035542,
+            "idleWakeupsPerSecond": 8
+          },
+          "pid": 73321,
+          "type": "Tab",
+          "creationTime": 1792330655742.852,
+          "memory": {
+            "workingSetSize": 137696,
+            "peakWorkingSetSize": 246976
+          },
+          "sandboxed": true
+        },
+        {
+          "cpu": {
+            "cumulativeCPUUsage": 1.565141,
+            "percentCPUUsage": 0.3846931148722031,
+            "idleWakeupsPerSecond": 18
+          },
+          "pid": 73606,
+          "type": "Tab",
+          "creationTime": 1792330668120.089,
+          "memory": {
+            "workingSetSize": 118272,
+            "peakWorkingSetSize": 227104
+          },
+          "sandboxed": true
+        }
+      ]
+    },
+    {
+      "label": "native-hidden",
+      "frames": 150,
+      "seconds": 5.00093,
+      "fps": 29.994421037686987,
+      "mainCpuPercentOneCore": 1.91766331462348,
+      "mainMemoryBefore": {
+        "rss": 155254784,
+        "heapTotal": 5242880,
+        "heapUsed": 4255404,
+        "external": 10818469,
+        "arrayBuffers": 0
+      },
+      "mainMemoryAfter": {
+        "rss": 148963328,
+        "heapTotal": 5505024,
+        "heapUsed": 4695724,
+        "external": 10819669,
+        "arrayBuffers": 0
+      },
+      "processed": 150,
+      "processedFPS": 29.994421037686987,
+      "cpuSubmitMs": 0.22472390666666628,
+      "gpuMs": 0.07307582534849644,
+      "completionMs": 0.8024847266666862,
+      "status": {
+        "state": "running",
+        "fps": 29.971680508379613,
+        "frameCount": 920,
+        "width": 1280,
+        "height": 720,
+        "mode": "shared-texture",
+        "sharedTexture": "Native GPU handle received (darwin)",
+        "error": null,
+        "native": {
+          "state": "running",
+          "device": "Apple M4",
+          "framesReceived": 920,
+          "framesProcessed": 882,
+          "droppedFrames": 38,
+          "failedFrames": 0,
+          "inFlight": 0,
+          "maxInFlight": 1,
+          "lastSequence": 920,
+          "orderingErrors": 0,
+          "averageCpuSubmitMs": 0.23689996031746016,
+          "averageGpuMs": 0.08395663515375315,
+          "averageNativeLatencyMs": 1.2811494183673466,
+          "averageCompletionMs": 1.307178119047613,
+          "cpuSubmitTotalMs": 208.94576499999985,
+          "gpuTotalMs": 74.04975220561028,
+          "gpuTimedFrames": 882,
+          "completionTotalMs": 1152.9311009999947,
+          "error": null,
+          "resources": {
+            "inFlight": 0,
+            "sourceRetains": 0,
+            "destinationTextures": 1,
+            "readbackCount": 2
+          }
+        }
+      },
+      "windowCount": 2,
+      "appMetrics": [
+        {
+          "cpu": {
+            "cumulativeCPUUsage": 2.178202,
+            "percentCPUUsage": 0.19248427124641473,
+            "idleWakeupsPerSecond": 5
+          },
+          "pid": 73181,
+          "type": "Browser",
+          "creationTime": 1792330649532.952,
+          "memory": {
+            "workingSetSize": 145504,
+            "peakWorkingSetSize": 192064
+          },
+          "sandboxed": false
+        },
+        {
+          "cpu": {
+            "cumulativeCPUUsage": 5.76485,
+            "percentCPUUsage": 1.3654893192519006,
+            "idleWakeupsPerSecond": 213
+          },
+          "pid": 73319,
+          "type": "GPU",
+          "creationTime": 1792330655609.765,
+          "serviceName": "GPU",
+          "memory": {
+            "workingSetSize": 105440,
+            "peakWorkingSetSize": 190704
+          },
+          "sandboxed": true
+        },
+        {
+          "cpu": {
+            "cumulativeCPUUsage": 0.05612,
+            "percentCPUUsage": 0.0007498284392530989,
+            "idleWakeupsPerSecond": 0
+          },
+          "pid": 73320,
+          "type": "Utility",
+          "creationTime": 1792330655612.715,
+          "serviceName": "network.mojom.NetworkService",
+          "name": "Network Service",
+          "memory": {
+            "workingSetSize": 40992,
+            "peakWorkingSetSize": 48160
+          },
+          "sandboxed": true
+        },
+        {
+          "cpu": {
+            "cumulativeCPUUsage": 3.540761,
+            "percentCPUUsage": 0.7524000451095707,
+            "idleWakeupsPerSecond": 39
+          },
+          "pid": 73321,
+          "type": "Tab",
+          "creationTime": 1792330655742.852,
+          "memory": {
+            "workingSetSize": 141264,
+            "peakWorkingSetSize": 246976
+          },
+          "sandboxed": true
+        },
+        {
+          "cpu": {
+            "cumulativeCPUUsage": 1.785655,
+            "percentCPUUsage": 0.3860086775920052,
+            "idleWakeupsPerSecond": 16
+          },
+          "pid": 73606,
+          "type": "Tab",
+          "creationTime": 1792330668120.089,
+          "memory": {
+            "workingSetSize": 115808,
+            "peakWorkingSetSize": 227104
+          },
+          "sandboxed": true
+        }
+      ]
+    },
+    {
+      "label": "native-editor-closed",
+      "frames": 150,
+      "seconds": 5.001334915999999,
+      "fps": 29.991992641830112,
+      "mainCpuPercentOneCore": 2.1452672496848244,
+      "mainMemoryBefore": {
+        "rss": 150208512,
+        "heapTotal": 5767168,
+        "heapUsed": 4815340,
+        "external": 10819909,
+        "arrayBuffers": 0
+      },
+      "mainMemoryAfter": {
+        "rss": 148979712,
+        "heapTotal": 5505024,
+        "heapUsed": 4715596,
+        "external": 10821109,
+        "arrayBuffers": 0
+      },
+      "processed": 150,
+      "processedFPS": 29.991992641830112,
+      "cpuSubmitMs": 0.255568366666667,
+      "gpuMs": 0.06851778055230777,
+      "completionMs": 0.8090658266667258,
+      "status": {
+        "state": "running",
+        "fps": 30.016082376808907,
+        "frameCount": 1100,
+        "width": 1280,
+        "height": 720,
+        "mode": "shared-texture",
+        "sharedTexture": "Native GPU handle received (darwin)",
+        "error": null,
+        "native": {
+          "state": "running",
+          "device": "Apple M4",
+          "framesReceived": 1100,
+          "framesProcessed": 1062,
+          "droppedFrames": 38,
+          "failedFrames": 0,
+          "inFlight": 0,
+          "maxInFlight": 1,
+          "lastSequence": 1100,
+          "orderingErrors": 0,
+          "averageCpuSubmitMs": 0.24060430320150653,
+          "averageGpuMs": 0.0813187791908023,
+          "averageNativeLatencyMs": 1.197721360640299,
+          "averageCompletionMs": 1.2243234623352304,
+          "cpuSubmitTotalMs": 255.52176999999992,
+          "gpuTotalMs": 86.36054350063205,
+          "gpuTimedFrames": 1062,
+          "completionTotalMs": 1300.2315170000147,
+          "error": null,
+          "resources": {
+            "inFlight": 0,
+            "sourceRetains": 0,
+            "destinationTextures": 1,
+            "readbackCount": 2
+          }
+        }
+      },
+      "windowCount": 2,
+      "appMetrics": [
+        {
+          "cpu": {
+            "cumulativeCPUUsage": 2.319936,
+            "percentCPUUsage": 0.2155376925536235,
+            "idleWakeupsPerSecond": 5
+          },
+          "pid": 73181,
+          "type": "Browser",
+          "creationTime": 1792330649532.952,
+          "memory": {
+            "workingSetSize": 145488,
+            "peakWorkingSetSize": 192064
+          },
+          "sandboxed": false
+        },
+        {
+          "cpu": {
+            "cumulativeCPUUsage": 6.241276,
+            "percentCPUUsage": 0.8022813498153025,
+            "idleWakeupsPerSecond": 92
+          },
+          "pid": 73319,
+          "type": "GPU",
+          "creationTime": 1792330655609.765,
+          "serviceName": "GPU",
+          "memory": {
+            "workingSetSize": 103392,
+            "peakWorkingSetSize": 190704
+          },
+          "sandboxed": true
+        },
+        {
+          "cpu": {
+            "cumulativeCPUUsage": 0.05623,
+            "percentCPUUsage": 0.00021993736183934816,
+            "idleWakeupsPerSecond": 0
+          },
+          "pid": 73320,
+          "type": "Utility",
+          "creationTime": 1792330655612.715,
+          "serviceName": "network.mojom.NetworkService",
+          "name": "Network Service",
+          "memory": {
+            "workingSetSize": 40816,
+            "peakWorkingSetSize": 48160
+          },
+          "sandboxed": true
+        },
+        {
+          "cpu": {
+            "cumulativeCPUUsage": 3.550405,
+            "percentCPUUsage": 0.009941166767471272,
+            "idleWakeupsPerSecond": 1
+          },
+          "pid": 73321,
+          "type": "Tab",
+          "creationTime": 1792330655742.852,
+          "memory": {
+            "workingSetSize": 132432,
+            "peakWorkingSetSize": 246976
+          },
+          "sandboxed": true
+        },
+        {
+          "cpu": {
+            "cumulativeCPUUsage": 2.072741,
+            "percentCPUUsage": 0.48791914008662873,
+            "idleWakeupsPerSecond": 16
+          },
+          "pid": 73606,
+          "type": "Tab",
+          "creationTime": 1792330668120.089,
+          "memory": {
+            "workingSetSize": 114272,
+            "peakWorkingSetSize": 227104
+          },
+          "sandboxed": true
+        }
+      ]
+    },
+    {
+      "label": "native-soak-0s",
+      "frames": 300,
+      "seconds": 10.001001583999997,
+      "fps": 29.99699554892102,
+      "mainCpuPercentOneCore": 2.369212703446364,
+      "mainMemoryBefore": {
+        "rss": 149258240,
+        "heapTotal": 5505024,
+        "heapUsed": 4893844,
+        "external": 10821349,
+        "arrayBuffers": 0
+      },
+      "mainMemoryAfter": {
+        "rss": 146407424,
+        "heapTotal": 6815744,
+        "heapUsed": 4919016,
+        "external": 10823749,
+        "arrayBuffers": 0
+      },
+      "processed": 300,
+      "processedFPS": 29.99699554892102,
+      "cpuSubmitMs": 0.28756208333333366,
+      "gpuMs": 0.08660916704684496,
+      "completionMs": 0.8995719433330426,
+      "status": {
+        "state": "running",
+        "fps": 29.963402221112688,
+        "frameCount": 1430,
+        "width": 1280,
+        "height": 720,
+        "mode": "shared-texture",
+        "sharedTexture": "Native GPU handle received (darwin)",
+        "error": null,
+        "native": {
+          "state": "running",
+          "device": "Apple M4",
+          "framesReceived": 1430,
+          "framesProcessed": 1392,
+          "droppedFrames": 38,
+          "failedFrames": 0,
+          "inFlight": 0,
+          "maxInFlight": 1,
+          "lastSequence": 1430,
+          "orderingErrors": 0,
+          "averageCpuSubmitMs": 0.2524713089080461,
+          "averageGpuMs": 0.08228059286711974,
+          "averageNativeLatencyMs": 1.1200580675287364,
+          "averageCompletionMs": 1.147281204022932,
+          "cpuSubmitTotalMs": 351.4400620000002,
+          "gpuTotalMs": 114.53458527103066,
+          "gpuTimedFrames": 1392,
+          "completionTotalMs": 1597.0154359999215,
+          "error": null,
+          "resources": {
+            "inFlight": 0,
+            "sourceRetains": 0,
+            "destinationTextures": 1,
+            "readbackCount": 2
+          }
+        }
+      },
+      "windowCount": 2,
+      "appMetrics": [
+        {
+          "cpu": {
+            "cumulativeCPUUsage": 2.583392,
+            "percentCPUUsage": 0.23735281998395577,
+            "idleWakeupsPerSecond": 4
+          },
+          "pid": 73181,
+          "type": "Browser",
+          "creationTime": 1792330649532.952,
+          "memory": {
+            "workingSetSize": 143120,
+            "peakWorkingSetSize": 192064
+          },
+          "sandboxed": false
+        },
+        {
+          "cpu": {
+            "cumulativeCPUUsage": 7.006077,
+            "percentCPUUsage": 0.6775051004511915,
+            "idleWakeupsPerSecond": 93
+          },
+          "pid": 73319,
+          "type": "GPU",
+          "creationTime": 1792330655609.765,
+          "serviceName": "GPU",
+          "memory": {
+            "workingSetSize": 103488,
+            "peakWorkingSetSize": 190704
+          },
+          "sandboxed": true
+        },
+        {
+          "cpu": {
+            "cumulativeCPUUsage": 0.056956,
+            "percentCPUUsage": 0.0007259237054185604,
+            "idleWakeupsPerSecond": 0
+          },
+          "pid": 73320,
+          "type": "Utility",
+          "creationTime": 1792330655612.715,
+          "serviceName": "network.mojom.NetworkService",
+          "name": "Network Service",
+          "memory": {
+            "workingSetSize": 42272,
+            "peakWorkingSetSize": 48160
+          },
+          "sandboxed": true
+        },
+        {
+          "cpu": {
+            "cumulativeCPUUsage": 3.562362,
+            "percentCPUUsage": 0.01082087138311474,
+            "idleWakeupsPerSecond": 0
+          },
+          "pid": 73321,
+          "type": "Tab",
+          "creationTime": 1792330655742.852,
+          "memory": {
+            "workingSetSize": 120288,
+            "peakWorkingSetSize": 246976
+          },
+          "sandboxed": true
+        },
+        {
+          "cpu": {
+            "cumulativeCPUUsage": 2.491891,
+            "percentCPUUsage": 0.3700387379944914,
+            "idleWakeupsPerSecond": 18
+          },
+          "pid": 73606,
+          "type": "Tab",
+          "creationTime": 1792330668120.089,
+          "memory": {
+            "workingSetSize": 112720,
+            "peakWorkingSetSize": 227104
+          },
+          "sandboxed": true
+        }
+      ]
+    },
+    {
+      "label": "native-soak-10s",
+      "frames": 300,
+      "seconds": 10.000506125000006,
+      "fps": 29.998481701844845,
+      "mainCpuPercentOneCore": 2.0765748993529054,
+      "mainMemoryBefore": {
+        "rss": 147275776,
+        "heapTotal": 7077888,
+        "heapUsed": 5013744,
+        "external": 10823997,
+        "arrayBuffers": 0
+      },
+      "mainMemoryAfter": {
+        "rss": 144703488,
+        "heapTotal": 6815744,
+        "heapUsed": 5446192,
+        "external": 10826397,
+        "arrayBuffers": 0
+      },
+      "processed": 300,
+      "processedFPS": 29.998481701844845,
+      "cpuSubmitMs": 0.25908733000000095,
+      "gpuMs": 0.06886763342966636,
+      "completionMs": 0.8012043333334683,
+      "status": {
+        "state": "running",
+        "fps": 29.96114040090029,
+        "frameCount": 1761,
+        "width": 1280,
+        "height": 720,
+        "mode": "shared-texture",
+        "sharedTexture": "Native GPU handle received (darwin)",
+        "error": null,
+        "native": {
+          "state": "running",
+          "device": "Apple M4",
+          "framesReceived": 1761,
+          "framesProcessed": 1723,
+          "droppedFrames": 38,
+          "failedFrames": 0,
+          "inFlight": 0,
+          "maxInFlight": 1,
+          "lastSequence": 1761,
+          "orderingErrors": 0,
+          "averageCpuSubmitMs": 0.2541143418456182,
+          "averageGpuMs": 0.07980327498658549,
+          "averageNativeLatencyMs": 1.0555999936157865,
+          "averageCompletionMs": 1.0821491282646263,
+          "cpuSubmitTotalMs": 437.8390110000002,
+          "gpuTotalMs": 137.5010428018868,
+          "gpuTimedFrames": 1723,
+          "completionTotalMs": 1864.5429479999511,
+          "error": null,
+          "resources": {
+            "inFlight": 0,
+            "sourceRetains": 0,
+            "destinationTextures": 1,
+            "readbackCount": 2
+          }
+        }
+      },
+      "windowCount": 2,
+      "appMetrics": [
+        {
+          "cpu": {
+            "cumulativeCPUUsage": 2.815937,
+            "percentCPUUsage": 0.20798939419180412,
+            "idleWakeupsPerSecond": 5
+          },
+          "pid": 73181,
+          "type": "Browser",
+          "creationTime": 1792330649532.952,
+          "memory": {
+            "workingSetSize": 141328,
+            "peakWorkingSetSize": 192064
+          },
+          "sandboxed": false
+        },
+        {
+          "cpu": {
+            "cumulativeCPUUsage": 7.81413,
+            "percentCPUUsage": 0.7360990298226806,
+            "idleWakeupsPerSecond": 94
+          },
+          "pid": 73319,
+          "type": "GPU",
+          "creationTime": 1792330655609.765,
+          "serviceName": "GPU",
+          "memory": {
+            "workingSetSize": 101952,
+            "peakWorkingSetSize": 190704
+          },
+          "sandboxed": true
+        },
+        {
+          "cpu": {
+            "cumulativeCPUUsage": 0.057691,
+            "percentCPUUsage": 0.000483974010595631,
+            "idleWakeupsPerSecond": 0
+          },
+          "pid": 73320,
+          "type": "Utility",
+          "creationTime": 1792330655612.715,
+          "serviceName": "network.mojom.NetworkService",
+          "name": "Network Service",
+          "memory": {
+            "workingSetSize": 42352,
+            "peakWorkingSetSize": 48160
+          },
+          "sandboxed": true
+        },
+        {
+          "cpu": {
+            "cumulativeCPUUsage": 3.573731,
+            "percentCPUUsage": 0.010035468120189631,
+            "idleWakeupsPerSecond": 1
+          },
+          "pid": 73321,
+          "type": "Tab",
+          "creationTime": 1792330655742.852,
+          "memory": {
+            "workingSetSize": 111024,
+            "peakWorkingSetSize": 246976
+          },
+          "sandboxed": true
+        },
+        {
+          "cpu": {
+            "cumulativeCPUUsage": 2.963217,
+            "percentCPUUsage": 0.4314802178444978,
+            "idleWakeupsPerSecond": 17
+          },
+          "pid": 73606,
+          "type": "Tab",
+          "creationTime": 1792330668120.089,
+          "memory": {
+            "workingSetSize": 108256,
+            "peakWorkingSetSize": 227104
+          },
+          "sandboxed": true
+        }
+      ]
+    },
+    {
+      "label": "native-soak-20s",
+      "frames": 300,
+      "seconds": 10.001678042,
+      "fps": 29.994966718605756,
+      "mainCpuPercentOneCore": 2.228326077525222,
+      "mainMemoryBefore": {
+        "rss": 145031168,
+        "heapTotal": 6815744,
+        "heapUsed": 5537088,
+        "external": 10826637,
+        "arrayBuffers": 0
+      },
+      "mainMemoryAfter": {
+        "rss": 138346496,
+        "heapTotal": 6815744,
+        "heapUsed": 5928340,
+        "external": 10829037,
+        "arrayBuffers": 0
+      },
+      "processed": 298,
+      "processedFPS": 29.795000273815052,
+      "cpuSubmitMs": 0.2899460469798668,
+      "gpuMs": 0.07390802032345493,
+      "completionMs": 1.0844956778519494,
+      "status": {
+        "state": "running",
+        "fps": 29.995763098462326,
+        "frameCount": 2091,
+        "width": 1280,
+        "height": 720,
+        "mode": "shared-texture",
+        "sharedTexture": "Native GPU handle received (darwin)",
+        "error": null,
+        "native": {
+          "state": "running",
+          "device": "Apple M4",
+          "framesReceived": 2091,
+          "framesProcessed": 2051,
+          "droppedFrames": 40,
+          "failedFrames": 0,
+          "inFlight": 0,
+          "maxInFlight": 1,
+          "lastSequence": 2091,
+          "orderingErrors": 0,
+          "averageCpuSubmitMs": 0.260603756704047,
+          "averageGpuMs": 0.07898499053979664,
+          "averageNativeLatencyMs": 1.0541463510482696,
+          "averageCompletionMs": 1.0803140692344435,
+          "cpuSubmitTotalMs": 534.4983050000004,
+          "gpuTotalMs": 161.9982155971229,
+          "gpuTimedFrames": 2051,
+          "completionTotalMs": 2215.724155999844,
+          "error": null,
+          "resources": {
+            "inFlight": 0,
+            "sourceRetains": 0,
+            "destinationTextures": 1,
+            "readbackCount": 2
+          }
+        }
+      },
+      "windowCount": 2,
+      "appMetrics": [
+        {
+          "cpu": {
+            "cumulativeCPUUsage": 3.066737,
+            "percentCPUUsage": 0.22351591195377912,
+            "idleWakeupsPerSecond": 6
+          },
+          "pid": 73181,
+          "type": "Browser",
+          "creationTime": 1792330649532.952,
+          "memory": {
+            "workingSetSize": 135488,
+            "peakWorkingSetSize": 192064
+          },
+          "sandboxed": false
+        },
+        {
+          "cpu": {
+            "cumulativeCPUUsage": 8.492392,
+            "percentCPUUsage": 0.5963506889187211,
+            "idleWakeupsPerSecond": 94
+          },
+          "pid": 73319,
+          "type": "GPU",
+          "creationTime": 1792330655609.765,
+          "serviceName": "GPU",
+          "memory": {
+            "workingSetSize": 99728,
+            "peakWorkingSetSize": 190704
+          },
+          "sandboxed": true
+        },
+        {
+          "cpu": {
+            "cumulativeCPUUsage": 0.058287,
+            "percentCPUUsage": 0.0005149062355745018,
+            "idleWakeupsPerSecond": 0
+          },
+          "pid": 73320,
+          "type": "Utility",
+          "creationTime": 1792330655612.715,
+          "serviceName": "network.mojom.NetworkService",
+          "name": "Network Service",
+          "memory": {
+            "workingSetSize": 40672,
+            "peakWorkingSetSize": 48160
+          },
+          "sandboxed": true
+        },
+        {
+          "cpu": {
+            "cumulativeCPUUsage": 3.587786,
+            "percentCPUUsage": 0.012683659864754953,
+            "idleWakeupsPerSecond": 1
+          },
+          "pid": 73321,
+          "type": "Tab",
+          "creationTime": 1792330655742.852,
+          "memory": {
+            "workingSetSize": 105376,
+            "peakWorkingSetSize": 246976
+          },
+          "sandboxed": true
+        },
+        {
+          "cpu": {
+            "cumulativeCPUUsage": 3.342644,
+            "percentCPUUsage": 0.3322811624756633,
+            "idleWakeupsPerSecond": 21
+          },
+          "pid": 73606,
+          "type": "Tab",
+          "creationTime": 1792330668120.089,
+          "memory": {
+            "workingSetSize": 105712,
+            "peakWorkingSetSize": 227104
+          },
+          "sandboxed": true
+        }
+      ]
+    },
+    {
+      "label": "bitmap-visible",
+      "frames": 150,
+      "seconds": 5.001281332999992,
+      "fps": 29.9923139716724,
+      "mainCpuPercentOneCore": 3.6078354322804165,
+      "mainMemoryBefore": {
+        "rss": 194330624,
+        "heapTotal": 4980736,
+        "heapUsed": 4142440,
+        "external": 10817613,
+        "arrayBuffers": 0
+      },
+      "mainMemoryAfter": {
+        "rss": 174931968,
+        "heapTotal": 4980736,
+        "heapUsed": 4139512,
+        "external": 10817613,
+        "arrayBuffers": 0
+      },
+      "processed": 0,
+      "processedFPS": 0,
+      "cpuSubmitMs": null,
+      "gpuMs": null,
+      "completionMs": null,
+      "status": {
+        "state": "running",
+        "fps": 29.963780022419428,
+        "frameCount": 183,
+        "width": 1280,
+        "height": 720,
+        "mode": "bitmap",
+        "sharedTexture": "Native GPU handle received (darwin)",
+        "error": null,
+        "native": {
+          "state": "disabled",
+          "device": "",
+          "framesReceived": 0,
+          "framesProcessed": 0,
+          "droppedFrames": 0,
+          "failedFrames": 0,
+          "inFlight": 0,
+          "maxInFlight": 0,
+          "lastSequence": 0,
+          "orderingErrors": 0,
+          "averageCpuSubmitMs": 0,
+          "averageGpuMs": null,
+          "averageNativeLatencyMs": 0,
+          "averageCompletionMs": 0,
+          "cpuSubmitTotalMs": 0,
+          "gpuTotalMs": 0,
+          "gpuTimedFrames": 0,
+          "completionTotalMs": 0,
+          "error": null,
+          "resources": {
+            "inFlight": 0,
+            "sourceRetains": 0,
+            "destinationTextures": 0,
+            "readbackCount": 2
+          }
+        }
+      },
+      "windowCount": 2,
+      "appMetrics": [
+        {
+          "cpu": {
+            "cumulativeCPUUsage": 3.849947,
+            "percentCPUUsage": 0.3614006625052311,
+            "idleWakeupsPerSecond": 11
+          },
+          "pid": 73181,
+          "type": "Browser",
+          "creationTime": 1792330649532.952,
+          "memory": {
+            "workingSetSize": 170832,
+            "peakWorkingSetSize": 272496
+          },
+          "sandboxed": false
+        },
+        {
+          "cpu": {
+            "cumulativeCPUUsage": 10.813578,
+            "percentCPUUsage": 1.2711322006841004,
+            "idleWakeupsPerSecond": 213
+          },
+          "pid": 73319,
+          "type": "GPU",
+          "creationTime": 1792330655609.765,
+          "serviceName": "GPU",
+          "memory": {
+            "workingSetSize": 143712,
+            "peakWorkingSetSize": 190704
+          },
+          "sandboxed": true
+        },
+        {
+          "cpu": {
+            "cumulativeCPUUsage": 0.068237,
+            "percentCPUUsage": 0.00045388072014674544,
+            "idleWakeupsPerSecond": 1
+          },
+          "pid": 73320,
+          "type": "Utility",
+          "creationTime": 1792330655612.715,
+          "serviceName": "network.mojom.NetworkService",
+          "name": "Network Service",
+          "memory": {
+            "workingSetSize": 41520,
+            "peakWorkingSetSize": 48160
+          },
+          "sandboxed": true
+        },
+        {
+          "cpu": {
+            "cumulativeCPUUsage": 4.057722,
+            "percentCPUUsage": 0.6277847670493126,
+            "idleWakeupsPerSecond": 35
+          },
+          "pid": 73321,
+          "type": "Tab",
+          "creationTime": 1792330655742.852,
+          "memory": {
+            "workingSetSize": 134464,
+            "peakWorkingSetSize": 246976
+          },
+          "sandboxed": true
+        },
+        {
+          "cpu": {
+            "cumulativeCPUUsage": 0.88592,
+            "percentCPUUsage": 0.40584558728701337,
+            "idleWakeupsPerSecond": 18
+          },
+          "pid": 75410,
+          "type": "Tab",
+          "creationTime": 1792330746079.647,
+          "memory": {
+            "workingSetSize": 169392,
+            "peakWorkingSetSize": 227136
+          },
+          "sandboxed": true
+        }
+      ]
+    },
+    {
+      "label": "bitmap-hidden",
+      "frames": 150,
+      "seconds": 5.002061207999999,
+      "fps": 29.98763784819325,
+      "mainCpuPercentOneCore": 4.028339350940626,
+      "mainMemoryBefore": {
+        "rss": 173981696,
+        "heapTotal": 4980736,
+        "heapUsed": 4157872,
+        "external": 11529043,
+        "arrayBuffers": 0
+      },
+      "mainMemoryAfter": {
+        "rss": 207945728,
+        "heapTotal": 4980736,
+        "heapUsed": 4160344,
+        "external": 10817613,
+        "arrayBuffers": 0
+      },
+      "processed": 0,
+      "processedFPS": 0,
+      "cpuSubmitMs": null,
+      "gpuMs": null,
+      "completionMs": null,
+      "status": {
+        "state": "running",
+        "fps": 29.963922209139685,
+        "frameCount": 368,
+        "width": 1280,
+        "height": 720,
+        "mode": "bitmap",
+        "sharedTexture": "Native GPU handle received (darwin)",
+        "error": null,
+        "native": {
+          "state": "disabled",
+          "device": "",
+          "framesReceived": 0,
+          "framesProcessed": 0,
+          "droppedFrames": 0,
+          "failedFrames": 0,
+          "inFlight": 0,
+          "maxInFlight": 0,
+          "lastSequence": 0,
+          "orderingErrors": 0,
+          "averageCpuSubmitMs": 0,
+          "averageGpuMs": null,
+          "averageNativeLatencyMs": 0,
+          "averageCompletionMs": 0,
+          "cpuSubmitTotalMs": 0,
+          "gpuTotalMs": 0,
+          "gpuTimedFrames": 0,
+          "completionTotalMs": 0,
+          "error": null,
+          "resources": {
+            "inFlight": 0,
+            "sourceRetains": 0,
+            "destinationTextures": 0,
+            "readbackCount": 2
+          }
+        }
+      },
+      "windowCount": 2,
+      "appMetrics": [
+        {
+          "cpu": {
+            "cumulativeCPUUsage": 4.236227,
+            "percentCPUUsage": 0.4037189474643794,
+            "idleWakeupsPerSecond": 15
+          },
+          "pid": 73181,
+          "type": "Browser",
+          "creationTime": 1792330649532.952,
+          "memory": {
+            "workingSetSize": 203088,
+            "peakWorkingSetSize": 340976
+          },
+          "sandboxed": false
+        },
+        {
+          "cpu": {
+            "cumulativeCPUUsage": 11.191981,
+            "percentCPUUsage": 0.6109258294146305,
+            "idleWakeupsPerSecond": 94
+          },
+          "pid": 73319,
+          "type": "GPU",
+          "creationTime": 1792330655609.765,
+          "serviceName": "GPU",
+          "memory": {
+            "workingSetSize": 138608,
+            "peakWorkingSetSize": 190704
+          },
+          "sandboxed": true
+        },
+        {
+          "cpu": {
+            "cumulativeCPUUsage": 0.069122,
+            "percentCPUUsage": 0.00176917414950701,
+            "idleWakeupsPerSecond": 0
+          },
+          "pid": 73320,
+          "type": "Utility",
+          "creationTime": 1792330655612.715,
+          "serviceName": "network.mojom.NetworkService",
+          "name": "Network Service",
+          "memory": {
+            "workingSetSize": 41312,
+            "peakWorkingSetSize": 48160
+          },
+          "sandboxed": true
+        },
+        {
+          "cpu": {
+            "cumulativeCPUUsage": 4.075973,
+            "percentCPUUsage": 0.011350519968958988,
+            "idleWakeupsPerSecond": 2
+          },
+          "pid": 73321,
+          "type": "Tab",
+          "creationTime": 1792330655742.852,
+          "memory": {
+            "workingSetSize": 130080,
+            "peakWorkingSetSize": 246976
+          },
+          "sandboxed": true
+        },
+        {
+          "cpu": {
+            "cumulativeCPUUsage": 1.135886,
+            "percentCPUUsage": 0.4256650823258206,
+            "idleWakeupsPerSecond": 16
+          },
+          "pid": 75410,
+          "type": "Tab",
+          "creationTime": 1792330746079.647,
+          "memory": {
+            "workingSetSize": 168208,
+            "peakWorkingSetSize": 227136
+          },
+          "sandboxed": true
+        }
+      ]
+    },
+    {
+      "label": "bitmap-editor-closed",
+      "frames": 150,
+      "seconds": 5.002097499999989,
+      "fps": 29.987420277193785,
+      "mainCpuPercentOneCore": 3.675698044670269,
+      "mainMemoryBefore": {
+        "rss": 264798208,
+        "heapTotal": 4980736,
+        "heapUsed": 4184044,
+        "external": 10817613,
+        "arrayBuffers": 0
+      },
+      "mainMemoryAfter": {
+        "rss": 151797760,
+        "heapTotal": 4980736,
+        "heapUsed": 4160336,
+        "external": 10817613,
+        "arrayBuffers": 0
+      },
+      "processed": 0,
+      "processedFPS": 0,
+      "cpuSubmitMs": null,
+      "gpuMs": null,
+      "completionMs": null,
+      "status": {
+        "state": "running",
+        "fps": 29.986871987339008,
+        "frameCount": 548,
+        "width": 1280,
+        "height": 720,
+        "mode": "bitmap",
+        "sharedTexture": "Native GPU handle received (darwin)",
+        "error": null,
+        "native": {
+          "state": "disabled",
+          "device": "",
+          "framesReceived": 0,
+          "framesProcessed": 0,
+          "droppedFrames": 0,
+          "failedFrames": 0,
+          "inFlight": 0,
+          "maxInFlight": 0,
+          "lastSequence": 0,
+          "orderingErrors": 0,
+          "averageCpuSubmitMs": 0,
+          "averageGpuMs": null,
+          "averageNativeLatencyMs": 0,
+          "averageCompletionMs": 0,
+          "cpuSubmitTotalMs": 0,
+          "gpuTotalMs": 0,
+          "gpuTimedFrames": 0,
+          "completionTotalMs": 0,
+          "error": null,
+          "resources": {
+            "inFlight": 0,
+            "sourceRetains": 0,
+            "destinationTextures": 0,
+            "readbackCount": 2
+          }
+        }
+      },
+      "windowCount": 2,
+      "appMetrics": [
+        {
+          "cpu": {
+            "cumulativeCPUUsage": 4.4652,
+            "percentCPUUsage": 0.36850323872224755,
+            "idleWakeupsPerSecond": 7
+          },
+          "pid": 73181,
+          "type": "Browser",
+          "creationTime": 1792330649532.952,
+          "memory": {
+            "workingSetSize": 148240,
+            "peakWorkingSetSize": 413344
+          },
+          "sandboxed": false
+        },
+        {
+          "cpu": {
+            "cumulativeCPUUsage": 11.643517,
+            "percentCPUUsage": 0.7093271897360769,
+            "idleWakeupsPerSecond": 94
+          },
+          "pid": 73319,
+          "type": "GPU",
+          "creationTime": 1792330655609.765,
+          "serviceName": "GPU",
+          "memory": {
+            "workingSetSize": 117040,
+            "peakWorkingSetSize": 190704
+          },
+          "sandboxed": true
+        },
+        {
+          "cpu": {
+            "cumulativeCPUUsage": 0.069401,
+            "percentCPUUsage": 0.00021591229642519208,
+            "idleWakeupsPerSecond": 0
+          },
+          "pid": 73320,
+          "type": "Utility",
+          "creationTime": 1792330655612.715,
+          "serviceName": "network.mojom.NetworkService",
+          "name": "Network Service",
+          "memory": {
+            "workingSetSize": 40944,
+            "peakWorkingSetSize": 48160
+          },
+          "sandboxed": true
+        },
+        {
+          "cpu": {
+            "cumulativeCPUUsage": 4.092405,
+            "percentCPUUsage": 0.014254255535019387,
+            "idleWakeupsPerSecond": 2
+          },
+          "pid": 73321,
+          "type": "Tab",
+          "creationTime": 1792330655742.852,
+          "memory": {
+            "workingSetSize": 123088,
+            "peakWorkingSetSize": 246976
+          },
+          "sandboxed": true
+        },
+        {
+          "cpu": {
+            "cumulativeCPUUsage": 1.410126,
+            "percentCPUUsage": 0.473189008310081,
+            "idleWakeupsPerSecond": 13
+          },
+          "pid": 75410,
+          "type": "Tab",
+          "creationTime": 1792330746079.647,
+          "memory": {
+            "workingSetSize": 115360,
+            "peakWorkingSetSize": 227136
+          },
+          "sandboxed": true
+        }
+      ]
+    }
+  ],
+  "gpuFeatures": {
+    "2d_canvas": "enabled",
+    "direct_rendering_display_compositor": "disabled_off_ok",
+    "gpu_compositing": "enabled",
+    "multiple_raster_threads": "enabled_on",
+    "opengl": "enabled_on",
+    "rasterization": "enabled",
+    "raw_draw": "disabled_off_ok",
+    "skia_graphite": "enabled_on",
+    "trees_in_viz": "disabled_off",
+    "video_decode": "enabled",
+    "video_encode": "enabled",
+    "webgl": "enabled",
+    "webgpu": "enabled",
+    "webnn": "disabled_off"
+  }
+}

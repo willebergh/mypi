@@ -116,6 +116,14 @@ async function failedOnce(h: Harness, pattern: RegExp, peerCreated = true) {
   assert.deepEqual(h.delegations, []);
 }
 
+test("native setup emits structured phases independently of human progress strings", async (t) => {
+  const phases: string[] = [];
+  const h = setup(t, { native: true, overrides: { onPhase: phase => phases.push(phase) } });
+  await h.ready();
+  assert.deepEqual(phases, ["starting-native", "creating-offer", "connecting-voice", "connecting-audio"]);
+  assert.ok(!phases.includes("connected"), "transport setup alone cannot assert a connected FaceTime call");
+});
+
 test("exact Codex endpoint, preserved bearer headers and JSON config; offer and ready gate resolution", async (t) => {
   const h = setup(t);
   await flush();

@@ -29,7 +29,7 @@ function harness(t: TestContext, mode: "native" | "browser" = "native") {
   let command!: (args: string, ctx: ExtensionContext) => Promise<void>;
   const pi = {
     registerCommand(_name: string, value: { handler: typeof command }) { command = value.handler; },
-    registerMessageRenderer() {},
+    registerMessageRenderer() {}, registerTool() {},
     on(name: string, handler: Function) { handlers.set(name, handler); },
     events: { on() {}, emit() {} }, appendEntry() {}, sendUserMessage() {}, sendMessage() {},
   } as unknown as ExtensionAPI;

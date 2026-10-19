@@ -74,8 +74,9 @@ export function openCodex(
       ])
       .filter(Boolean)));
     record("local", { type: "codex.starting" });
-    function progress(message: string) {
+    function progress(message: string, phase: "starting-native" | "creating-offer" | "connecting-voice" | "connecting-audio") {
       record("local", { type: "codex.progress", message });
+      safely(() => callbacks.onPhase?.(phase));
       safely(() => callbacks.onProgress?.(message));
     }
     function finish(error?: Error) {
@@ -131,7 +132,7 @@ export function openCodex(
     signal.addEventListener("abort", abort, { once: true });
     void (async () => {
       try {
-        progress("Starting native microphone and speaker…");
+        progress("Starting native microphone and speaker…", "starting-native");
         peer = await dependencies.createPeer({
           onEvent(event) {
             // Raw peer events, once each, before startup buffering or wire deduplication.
@@ -170,10 +171,10 @@ export function openCodex(
           };
         }
         if (peer.url) safely(() => callbacks.onConnectUrl?.(peer!.url!));
-        else progress("Creating native WebRTC offer…");
+        else progress("Creating native WebRTC offer…", "creating-offer");
         const sdp = await peer.offer;
         if (controller.signal.aborted) return;
-        progress("Connecting to Codex voice…");
+        progress("Connecting to Codex voice…", "connecting-voice");
         if (!/^v=0\r?\n/.test(sdp) || Buffer.byteLength(sdp) > MAX_SDP) throw new Error("Invalid Codex WebRTC offer");
         deadline = setTimeout(() => fail(new Error("Codex voice call setup timed out after 25 seconds")), 25_000);
         const requestHeaders = new Headers(headers);
@@ -217,7 +218,7 @@ export function openCodex(
         }
         if (!/^v=0\r?\n/.test(body)) throw new Error("Codex voice returned an invalid SDP answer");
         answered = true;
-        progress("Establishing WebRTC audio…");
+        progress("Establishing WebRTC audio…", "connecting-audio");
         peer.applyAnswer(body);
         await readiness;
         clearTimeout(deadline);

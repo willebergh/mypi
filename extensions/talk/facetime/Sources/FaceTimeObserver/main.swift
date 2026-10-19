@@ -43,6 +43,9 @@ struct Options {
             "inputDevice": inputDevice ?? NSNull(),
             "outputDevice": outputDevice ?? NSNull(),
             "autoAnswer": autoAnswer,
+            // Capability negotiation prevents older protocol-1 services from
+            // ignoring media=video and silently submitting their audio URL.
+            "callMedia": ["audio", "video"],
             "allowedCallerCount": allowedCallers.count,
             "allowedRecipientCount": allowedRecipients.count
         ]
@@ -128,9 +131,13 @@ final class WatchService: @unchecked Sendable {
     private var confirmationAttemptedCallID: String?
     private var routedFaceTimePID: pid_t?
     private var pendingRecipient: String?
+    private var pendingMedia: FaceTimeCallMedia?
     private var outgoingLaunchPending = false
     private var callStartDeadline: Date?
     private var ringingDeadline: Date?
+    private var trackedVideoWindowID: String?
+    private var videoAttempts = VideoCallAttempts()
+    private var videoCallDiagnostic: VideoCallDiagnostic = .notObserved
 
     init(options: Options, emitStdout: Bool = true) {
         self.options = options
@@ -206,6 +213,7 @@ final class WatchService: @unchecked Sendable {
         videoLayout?.invalidate()
         videoLayout = nil
         videoLayoutObserver = VideoLayoutObserver()
+        videoCallDiagnostic = .notObserved
         timer?.invalidate()
         timer = nil
         for observer in observers.values { observer.stop() }
@@ -262,29 +270,42 @@ final class WatchService: @unchecked Sendable {
         let currentVideo = VideoLayout.extract(currentSnapshots)
         if let event = videoLayoutObserver.update(currentVideo) { emit(event) }
         videoFollow?.observe(currentVideo, manualBusy: videoLayout?.isBusy ?? false)
-        handleCallConfirmation(CallConfirmation.extract(from: currentSnapshots))
-        let observation = CallObservation.extract(from: currentSnapshots)
-        if pendingRecipient != nil, observation.present, let observedIdentity = observation.identity,
+        if pendingMedia != .video { handleCallConfirmation(CallConfirmation.extract(from: currentSnapshots)) }
+        let observation: CallObservation?
+        if pendingMedia == .video {
+            let videoSnapshots = readVideoSnapshots(targets: controlTargets())
+            observation = observeOutgoingVideo(videoSnapshots)
+        } else {
+            observation = CallObservation.extract(from: currentSnapshots)
+        }
+        if let observation, pendingMedia != .video, pendingRecipient != nil, observation.present, let observedIdentity = observation.identity,
            !isObservedRecipientAllowed(observedIdentity) {
             _ = performSemanticPress(label: "End", targets: controlTargets())
             if let event = callTracker.forceFailed(evidence: "observed_recipient_not_allowlisted") { emit(event) }
             clearOutgoingRequest()
-        } else {
+        } else if let observation {
             let callEvents = callTracker.update(observation)
             for event in callEvents {
                 emit(event)
                 switch event["event"] as? String {
                 case "call.dialing":
                     ringingDeadline = Date().addingTimeInterval(max(1, options.ringingTimeoutSeconds))
+                    if pendingMedia == .video { callStartDeadline = nil }
+                case "call.unknown" where pendingMedia == .video:
+                    if ringingDeadline == nil { ringingDeadline = Date().addingTimeInterval(max(1, options.ringingTimeoutSeconds)) }
+                    callStartDeadline = nil
                 case "call.connected":
                     callStartDeadline = nil
                     ringingDeadline = nil
                 case "call.failed", "call.ended":
-                    clearOutgoingRequest()
+                    if callTracker.phase != "unconfirmed" { clearOutgoingRequest() }
                 default: break
                 }
             }
             if !callEvents.isEmpty { saveAllSnapshotsIfRequested() }
+            if pendingMedia == .video, callTracker.callID == nil { clearOutgoingRequest() }
+        } else if pendingMedia == .video {
+            callTracker.markVideoObservationUncertain()
         }
         // Only the already-loaded options are used; no file watching. Defer
         // startup routing until FaceTime exists and the tracked call is idle.
@@ -303,6 +324,7 @@ final class WatchService: @unchecked Sendable {
             "timestamp": timestamp(),
             "permission": permissionDiagnostic(),
             "call": callTracker.statusJSON,
+            "videoCallDiagnostics": videoCallDiagnostic.statusJSON(tracker: callTracker),
             "video": VideoLayout.extract(Array(snapshots.values))?.json ?? ["available": false],
             "videoFollow": videoFollow?.status ?? ["enabled": false],
             "configuration": options.configurationJSON,
@@ -374,7 +396,7 @@ final class WatchService: @unchecked Sendable {
                 reply(commandError(id: id, code: "no_active_call", message: "No call is active"))
                 return
             }
-            let result = performSemanticPress(label: "End", targets: controlTargets())
+            let result = endCurrentCall(targets: controlTargets())
             if result.ok { callTracker.markLocalHangupRequested() }
             reply(actionResponse(id: id, action: result))
         case "call":
@@ -386,7 +408,14 @@ final class WatchService: @unchecked Sendable {
                 reply(commandError(id: id, code: "recipient_not_allowed", message: "Recipient must exactly match the Swift recipient allowlist"))
                 return
             }
-            startOutgoingCall(recipient: recipient, id: id, reply: reply)
+            do {
+                let media = try FaceTimeCallMedia.fromCommand(command)
+                startOutgoingCall(recipient: recipient, media: media, id: id, reply: reply)
+            } catch let error as FaceTimeCallRequestError {
+                reply(commandError(id: id, code: error.code, message: error.message))
+            } catch {
+                reply(commandError(id: id, code: "invalid_command", message: error.localizedDescription))
+            }
         case "video.follow.status", "video.follow.set", "video.follow.calibrate":
             do {
                 guard let follow = videoFollow else { throw videoFollowError("Video follow controller is unavailable") }
@@ -499,9 +528,9 @@ final class WatchService: @unchecked Sendable {
     }
 
     private func handleCallConfirmation(_ confirmation: CallConfirmation?) {
-        guard isRunning, let confirmation,
+        guard isRunning, let confirmation, callTracker.phase == "starting",
               let callID = callTracker.callID,
-              pendingRecipient != nil,
+              pendingRecipient != nil, let media = pendingMedia,
               confirmationAttemptedCallID != callID else { return }
         guard isObservedRecipientAllowed(confirmation.identity) else {
             if let event = callTracker.forceFailed(evidence: "click_to_call_identity_not_allowlisted") { emit(event) }
@@ -509,18 +538,96 @@ final class WatchService: @unchecked Sendable {
             return
         }
         confirmationAttemptedCallID = callID
-        let result = performCallConfirmation(expectedIdentity: confirmation.identity, targets: controlTargets())
+        // Reacquire identity AND media from the same live banner before AXPress.
+        // An ambiguous video banner is never treated as an audio fallback.
+        let result = confirmation.permits(media)
+            ? performCallConfirmation(expectedIdentity: confirmation.identity, expectedMedia: media, targets: controlTargets())
+            : AXActionResult(ok: false, error: "FaceTime confirmation media is mismatched or ambiguous for requested \(media.rawValue); not pressed", element: nil)
         emit([
             "type": "event",
             "event": "call.confirmation_attempted",
             "callId": callID,
             "identity": confirmation.identity,
+            "requestedMedia": media.rawValue,
+            "media": confirmation.media?.rawValue ?? NSNull(),
             "verified": result.ok,
             "error": result.error ?? NSNull()
         ])
         if result.ok {
             callStartDeadline = Date().addingTimeInterval(max(1, options.callStartTimeoutSeconds))
         }
+    }
+
+    private var videoRecipientIdentities: [String] {
+        guard let recipient = pendingRecipient else { return [] }
+        let aliases = options.recipientAliases.first { VideoCallUI.normalizedWholeIdentity($0.key) == VideoCallUI.normalizedWholeIdentity(recipient) }?.value ?? []
+        return [recipient] + aliases
+    }
+
+    private func readVideoSnapshots(targets: [ProcessTarget]) -> [[String: Any]] {
+        let reader = AXTreeReader(maxDepth: 16, maxNodes: 3_000)
+        return targets.filter { $0.bundleIdentifier == "com.apple.FaceTime" }.map { reader.tree(for: $0, keywords: []) }
+    }
+
+    // nil means unreadable/ambiguous, NOT disappeared. Only complete empty
+    // video UI observations can release a retained timed-out request.
+    private func observeOutgoingVideo(_ snapshots: [[String: Any]]) -> CallObservation? {
+        if snapshots.isEmpty { videoCallDiagnostic = .noUI; return CallObservation() }
+        guard let ui = VideoCallUI(snapshots) else { videoCallDiagnostic = .unreadable; return nil }
+        var sawConfirmation = false
+        let identities = videoRecipientIdentities
+        if let confirmation = ui.confirmation(identities: identities, pendingVideo: callTracker.phase == "starting"),
+           let callID = callTracker.callID {
+            sawConfirmation = true
+            callTracker.markVideoConfirmationSeen()
+            if videoAttempts.claim(.confirmation, callID: callID) {
+                let result = performVideoCallPress(expected: confirmation, targets: controlTargets()) { fresh in
+                    VideoCallUI(fresh)?.confirmation(identities: identities, pendingVideo: self.callTracker.phase == "starting" && self.callTracker.callID == callID && self.pendingMedia == .video)
+                }
+                emit(["type": "event", "event": "call.confirmation_attempted", "callId": callID,
+                      "identity": confirmation.identity, "requestedMedia": "video", "media": NSNull(),
+                      "verified": result.ok, "error": result.error ?? NSNull()])
+                // Confirmation has unknown observed media and is not connection.
+                if result.ok { callStartDeadline = Date().addingTimeInterval(max(1, options.callStartTimeoutSeconds)) }
+            }
+        }
+        if let layout = ui.participantContext(),
+           (!identities.compactMap(VideoCallUI.normalizedWholeIdentity).contains(VideoCallUI.normalizedWholeIdentity(layout.peer) ?? "") ||
+            (trackedVideoWindowID != nil && (trackedVideoWindowID != layout.windowID ||
+                VideoCallUI.normalizedWholeIdentity(layout.peer) != callTracker.observation.identity.flatMap(VideoCallUI.normalizedWholeIdentity)))) {
+            if let event = callTracker.retainVideoFailure(evidence: "video_identity_or_window_changed_review_ui_manually") { emit(event) }
+            callStartDeadline = nil; ringingDeadline = nil
+            videoCallDiagnostic = .contextChanged
+            return nil // Never press End on a different peer/window.
+        }
+        let result = ui.observationResult(snapshots: snapshots, identities: identities, expectedWindowID: trackedVideoWindowID)
+        videoCallDiagnostic = result.diagnostic
+        if let observation = result.observation {
+            trackedVideoWindowID = observation.videoWindowID
+            return observation
+        }
+        if sawConfirmation { videoCallDiagnostic = .confirmation }
+        else if !ui.hasCallUI { videoCallDiagnostic = .noUI }
+        return ui.hasCallUI ? nil : CallObservation()
+    }
+
+    private func endCurrentCall(targets: [ProcessTarget]) -> AXActionResult {
+        guard pendingMedia == .video else { return performSemanticPress(label: "End", targets: targets) }
+        guard let callID = callTracker.callID, videoAttempts.claim(.end, callID: callID) else {
+            return AXActionResult(ok: false, error: "Video End was already attempted; review UI manually, do not retry", element: nil)
+        }
+        let identities = videoRecipientIdentities
+        let windowID = trackedVideoWindowID
+        func select(_ snapshots: [[String: Any]]) -> VideoCallControl? {
+            guard self.callTracker.callID == callID, self.pendingMedia == .video, let windowID,
+                  let identity = self.callTracker.observation.identity,
+                  let ui = VideoCallUI(snapshots) else { return nil }
+            return ui.endControl(expectedWindowID: windowID, expectedIdentity: identity, identities: identities)
+        }
+        guard let expected = select(readVideoSnapshots(targets: targets)) else {
+            return AXActionResult(ok: false, error: "Unique current identity/window-scoped video End unavailable; review UI manually", element: nil)
+        }
+        return performVideoCallPress(expected: expected, targets: targets, select: select)
     }
 
     private func controlTargets() -> [ProcessTarget] {
@@ -546,7 +653,7 @@ final class WatchService: @unchecked Sendable {
         }
     }
 
-    private func startOutgoingCall(recipient: String, id: Any, reply: @escaping ([String: Any]) -> Void) {
+    private func startOutgoingCall(recipient: String, media: FaceTimeCallMedia, id: Any, reply: @escaping ([String: Any]) -> Void) {
         guard let run, run.isRunning else { return }
         outgoingLaunchPending = true
         let proceed = { [weak self] in
@@ -559,29 +666,55 @@ final class WatchService: @unchecked Sendable {
                 return
             }
             let targets = self.controlTargets()
+            if media == .video {
+                let snapshots = self.readVideoSnapshots(targets: targets)
+                guard self.options.allowedRecipients.count == 1, let ui = VideoCallUI(snapshots), !ui.hasCallUI else {
+                    self.outgoingLaunchPending = false
+                    reply(self.commandError(id: id, code: "video_ui_not_idle", message: "FaceTime must have a complete idle UI before a new video request; review manually"))
+                    return
+                }
+            }
             if let routingError = self.applyConfiguredAudioRouting(targets: targets) {
                 self.outgoingLaunchPending = false
                 reply(self.commandError(id: id, code: "audio_routing_failed", message: routingError))
                 return
             }
-            guard let callID = self.callTracker.beginOutgoingRequest(identity: recipient) else {
+            guard let callID = self.callTracker.beginOutgoingRequest(identity: recipient, media: media) else {
                 self.outgoingLaunchPending = false
                 reply(self.commandError(id: id, code: "call_in_progress", message: "A call is already active"))
                 return
             }
             self.outgoingLaunchPending = false
             self.pendingRecipient = recipient
+            self.pendingMedia = media
             self.callStartDeadline = Date().addingTimeInterval(max(1, self.options.callStartTimeoutSeconds))
-            initiateFaceTimeAudioCall(to: recipient) { [weak self] result in
+            initiateFaceTimeCall(to: recipient, media: media) { [weak self] result in
                 DispatchQueue.main.async { [weak self] in
                     guard run.isRunning, let self else { return }
+                    guard self.callTracker.callID == callID, self.pendingRecipient == recipient, self.pendingMedia == media else {
+                        reply(self.commandError(id: id, code: "call_outcome_unknown", message: "Call changed before URL launch completed; outcome unknown, not retried"))
+                        return
+                    }
                     switch result {
                     case .success:
-                        reply(["type": "response", "id": id, "ok": true, "result": ["callId": callID, "to": recipient]])
+                        reply(["type": "response", "id": id, "ok": true, "result": ["callId": callID, "to": recipient, "requestedMedia": media.rawValue]])
                     case .failure(let error):
-                        if let event = self.callTracker.forceFailed(evidence: "launch_failed") { self.emit(event) }
-                        self.clearOutgoingRequest()
-                        reply(self.commandError(id: id, code: "call_launch_failed", message: error.localizedDescription))
+                        if media == .video {
+                            if let event = self.callTracker.retainVideoFailure(evidence: "video_launch_failed_review_ui_manually") { self.emit(event) }
+                            self.callStartDeadline = nil; self.ringingDeadline = nil
+                            // The request is tracked, not terminally rejected.
+                            // Return its ID so Pi need not adopt an event-only
+                            // target after a launch failure. This is not launch
+                            // success or connection evidence.
+                            reply(["type": "response", "id": id, "ok": true, "result": [
+                                "callId": callID, "to": recipient, "requestedMedia": media.rawValue,
+                                "status": "retained", "error": error.localizedDescription
+                            ]])
+                        } else {
+                            if let event = self.callTracker.forceFailed(evidence: "launch_failed") { self.emit(event) }
+                            self.clearOutgoingRequest()
+                            reply(self.commandError(id: id, code: "call_launch_failed", message: error.localizedDescription))
+                        }
                     }
                 }
             }
@@ -607,6 +740,19 @@ final class WatchService: @unchecked Sendable {
     private func enforceCallTimeouts(targets: [ProcessTarget]) {
         guard isRunning else { return }
         let now = Date()
+        if pendingMedia == .video {
+            let startupExpired = callStartDeadline.map { now >= $0 } == true
+            let ringingExpired = ringingDeadline.map { now >= $0 } == true
+            if callTracker.phase != "connected", callTracker.phase != "unconfirmed", startupExpired || ringingExpired {
+                // One scoped End attempt only. Missing/ambiguous confirmation
+                // Cancel semantics are unproven: never guess or discard ownership.
+                _ = endCurrentCall(targets: targets)
+                if let event = callTracker.retainVideoFailure(evidence: "video_connection_timeout_review_ui_manually") { emit(event) }
+                callStartDeadline = nil
+                ringingDeadline = nil
+            }
+            return
+        }
         if let deadline = callStartDeadline, now >= deadline, callTracker.phase == "starting" {
             if let event = callTracker.forceFailed(evidence: "call_ui_not_observed_before_timeout") { emit(event) }
             clearOutgoingRequest()
@@ -620,9 +766,12 @@ final class WatchService: @unchecked Sendable {
     private func clearOutgoingRequest() {
         outgoingLaunchPending = false
         pendingRecipient = nil
+        pendingMedia = nil
         confirmationAttemptedCallID = nil
         callStartDeadline = nil
         ringingDeadline = nil
+        trackedVideoWindowID = nil
+        videoAttempts = VideoCallAttempts()
     }
 
     private func maybeAutoAnswer() {

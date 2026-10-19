@@ -1,0 +1,36 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>CFBundleDevelopmentRegion</key>
+    <string>en</string>
+    <key>CFBundleExecutable</key>
+    <string>__BUNDLE_ID__</string>
+    <key>CFBundleIdentifier</key>
+    <string>__BUNDLE_ID__</string>
+    <key>CFBundleInfoDictionaryVersion</key>
+    <string>6.0</string>
+    <key>CFBundleName</key>
+    <string>Pi Talk Webcam</string>
+    <key>CFBundleDisplayName</key>
+    <string>Pi Talk Webcam</string>
+    <key>CFBundlePackageType</key>
+    <string>SYSX</string>
+    <key>CFBundleShortVersionString</key>
+    <string>__VERSION__</string>
+    <key>CFBundleVersion</key>
+    <string>__BUILD_VERSION__</string>
+    <key>LSMinimumSystemVersion</key>
+    <string>12.3</string>
+    <key>NSSystemExtensionUsageDescription</key>
+    <string>Pi Talk Webcam provides a virtual camera with an animated test pattern.</string>
+    <key>CMIOExtension</key>
+    <dict>
+        <key>CMIOExtensionMachServiceName</key>
+        <string>__MACH_SERVICE__</string>
+    </dict>
+    <!-- Informational parent-build metadata, not a signing entitlement. -->
+    <key>PiTalkTeamIdentifier</key>
+    <string>__TEAM_ID__</string>
+</dict>
+</plist>

@@ -1,5 +1,6 @@
 import type { MessageEndEvent } from "@earendil-works/pi-coding-agent";
 import { safeLiveUpdate } from "./context.ts";
+import { SUBAGENT_COMPLETION_TYPE } from "../subagents/protocol.ts";
 import type { LiveSession } from "./live.ts";
 
 const QUIET_REFERENCE = "Silent unless asked; use for follow-ups.\n";
@@ -80,6 +81,10 @@ export function createTalkTerminalContext(
     },
     message(message: MessageEndEvent["message"]) {
       if (!available()) { reset(); return; }
+      // A consumed background report starts/steers parent work, not a typed
+      // terminal reply. Its parent readout belongs exclusively to the bridge's
+      // explicit provenance path (or remains unowned), never this quiet mirror.
+      if (message.role === "custom" && message.customType === SUBAGENT_COMPLETION_TYPE) { reset(); return; }
       if (message.role === "user") {
         if (queuedFollowUp) {
           const final = latestAssistantStopReason === "stop" ? reply : undefined;

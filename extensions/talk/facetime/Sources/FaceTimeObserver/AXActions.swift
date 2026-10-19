@@ -96,13 +96,75 @@ func performIncomingAnswer(expectedIdentity: String, targets: [ProcessTarget]) -
     )
 }
 
-func performCallConfirmation(expectedIdentity: String, targets: [ProcessTarget]) -> AXActionResult {
-    performFaceTimeBannerButton(
-        label: "Call",
-        expectedIdentity: expectedIdentity,
-        identitySuffix: ", Click to Call",
-        targets: targets
-    )
+func performCallConfirmation(expectedIdentity: String, expectedMedia: FaceTimeCallMedia = .audio, targets: [ProcessTarget]) -> AXActionResult {
+    var matches: [VerifiedBannerButton] = []
+    for target in targets where target.bundleIdentifier == "com.apple.notificationcenterui" {
+        let root = AXUIElementCreateApplication(target.pid)
+        let banners = findElements(root: root, maxDepth: 14, maxNodes: 3_000, where: {
+            copyStringAttribute($0, "AXIdentifier") == "FACETIME_NOTIFICATION" ||
+            copyStringAttribute($0, kAXDescriptionAttribute as String) == "FACETIME_NOTIFICATION"
+        })
+        for banner in banners {
+            let nodes = findElements(root: banner, maxDepth: 8, maxNodes: 300, where: { _ in true })
+            let strings = nodes.flatMap { node in
+                [kAXTitleAttribute as String, kAXDescriptionAttribute as String, kAXValueAttribute as String].compactMap { copyStringAttribute(node, $0) }
+            }
+            guard let confirmation = CallConfirmation.fromBannerStrings(strings),
+                  normalizedIdentity(confirmation.identity) == normalizedIdentity(expectedIdentity) else { continue }
+            guard confirmation.permits(expectedMedia) else {
+                return AXActionResult(ok: false, error: "FaceTime confirmation media is mismatched or ambiguous for requested \(expectedMedia.rawValue); not pressed", element: nil)
+            }
+            let buttons = nodes.filter { node in
+                let role = copyStringAttribute(node, kAXRoleAttribute as String)
+                let labels = [copyStringAttribute(node, kAXTitleAttribute as String), copyStringAttribute(node, kAXDescriptionAttribute as String)].compactMap { $0 }
+                return (role == (kAXButtonRole as String) || role == (kAXPopUpButtonRole as String)) && labels.contains("Call")
+            }
+            guard buttons.count == 1 else {
+                return AXActionResult(ok: false, error: "FaceTime confirmation Call control is missing or ambiguous; not pressed", element: nil)
+            }
+            matches.append(VerifiedBannerButton(target: target, button: buttons[0]))
+        }
+    }
+    guard matches.count == 1, let match = matches.first else {
+        return AXActionResult(ok: false, error: "Unique identity/media-verified FaceTime Call banner was not found", element: nil)
+    }
+    let result = AXUIElementPerformAction(match.button, kAXPressAction as CFString)
+    return AXActionResult(ok: result == .success, error: result == .success ? nil : axErrorName(result),
+        element: ["process": match.target.json, "description": "Call", "identity": expectedIdentity,
+                  "requestedMedia": expectedMedia.rawValue, "method": "AXPress"])
+}
+
+// Video controls are selected from a fresh complete FaceTime tree, then
+// reacquired by ephemeral AXChildren path. No coordinate or banner fallback.
+func performVideoCallPress(expected: VideoCallControl, targets: [ProcessTarget],
+                          select: ([[String: Any]]) -> VideoCallControl?) -> AXActionResult {
+    let apps = targets.filter { $0.bundleIdentifier == "com.apple.FaceTime" }
+    let reader = AXTreeReader(maxDepth: 16, maxNodes: 3_000)
+    let snapshots = apps.map { reader.tree(for: $0, keywords: []) }
+    guard select(snapshots) == expected, apps.count == 1, Int(apps[0].pid) == expected.pid else {
+        return AXActionResult(ok: false, error: "Video call target changed or is ambiguous; not pressed, do not retry automatically", element: nil)
+    }
+    var element = AXUIElementCreateApplication(apps[0].pid)
+    for index in expected.path {
+        var raw: CFTypeRef?
+        guard AXUIElementCopyAttributeValue(element, kAXChildrenAttribute as CFString, &raw) == .success,
+              let children = raw as? [AXUIElement], children.indices.contains(index) else {
+            return AXActionResult(ok: false, error: "Video call control disappeared; not pressed", element: nil)
+        }
+        element = children[index]
+    }
+    var enabled: CFTypeRef?, actions: CFArray?
+    guard copyStringAttribute(element, kAXRoleAttribute as String) == "AXButton",
+          copyStringAttribute(element, kAXDescriptionAttribute as String) == expected.label,
+          AXUIElementCopyAttributeValue(element, kAXEnabledAttribute as CFString, &enabled) == .success,
+          (enabled as? NSNumber)?.boolValue == true,
+          AXUIElementCopyActionNames(element, &actions) == .success,
+          (actions as? [String] ?? []).contains("AXPress") else {
+        return AXActionResult(ok: false, error: "Video call control is no longer uniquely actionable; not pressed", element: nil)
+    }
+    let result = AXUIElementPerformAction(element, kAXPressAction as CFString)
+    return AXActionResult(ok: result == .success, error: result == .success ? nil : axErrorName(result),
+                          element: ["description": expected.label, "method": "AXPress", "identity": expected.identity])
 }
 
 private struct VerifiedBannerButton {
@@ -137,18 +199,6 @@ private func verifiedFaceTimeBannerButton(label: String, expectedIdentity: Strin
         }
     }
     return nil
-}
-
-private func performFaceTimeBannerButton(label: String, expectedIdentity: String, identitySuffix: String, targets: [ProcessTarget]) -> AXActionResult {
-    guard let match = verifiedFaceTimeBannerButton(label: label, expectedIdentity: expectedIdentity, identitySuffix: identitySuffix, targets: targets) else {
-        return AXActionResult(ok: false, error: "Verified FaceTime \(label) button was not found", element: nil)
-    }
-    let result = AXUIElementPerformAction(match.button, kAXPressAction as CFString)
-    return AXActionResult(
-        ok: result == .success,
-        error: result == .success ? nil : axErrorName(result),
-        element: ["process": match.target.json, "description": label, "identity": expectedIdentity, "method": "AXPress"]
-    )
 }
 
 private func findElement(root: AXUIElement, maxDepth: Int, maxNodes: Int, where predicate: (AXUIElement) -> Bool) -> AXUIElement? {

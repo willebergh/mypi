@@ -28,7 +28,7 @@ async function flush() {
   for (let i = 0; i < 12; i++) await Promise.resolve();
 }
 
-function setup(t: TestContext, audioMode: "pcm" | "browser" | "native" = "pcm") {
+function setup(t: TestContext, audioMode: "pcm" | "browser" | "native" = "pcm", createWebcamBridge?: Dependencies["createWebcamBridge"]) {
   t.mock.timers.enable({ apis: ["setTimeout", "setInterval"] });
   let now = 0;
   t.mock.method(performance, "now", () => now);
@@ -42,6 +42,7 @@ function setup(t: TestContext, audioMode: "pcm" | "browser" | "native" = "pcm") 
   const handlers = new Map<string, Handler[]>();
   const listeners = new Map<string, Handler[]>();
   const commands = new Map<string, Command>();
+  const tools = new Map<string, any>();
   const emitted: [string, unknown][] = [];
   const notices: [string, string][] = [];
   const statuses: [string, string | undefined][] = [];
@@ -94,6 +95,7 @@ function setup(t: TestContext, audioMode: "pcm" | "browser" | "native" = "pcm") 
   const pi = {
     registerCommand(name: string, command: Command) { commands.set(name, command); },
     registerMessageRenderer() {},
+    registerTool(tool: any) { tools.set(tool.name, tool); },
     on(name: string, handler: Handler) { add(handlers, name, handler); },
     events,
     appendEntry(name: string, value: unknown) { entries.push([name, value]); },
@@ -160,6 +162,7 @@ function setup(t: TestContext, audioMode: "pcm" | "browser" | "native" = "pcm") 
   };
   const dependencies: Dependencies = {
     audioMode,
+    ...(createWebcamBridge ? { createWebcamBridge } : {}),
     // Controller tests must never reset the user's real trace file. Filesystem
     // reset behavior is exercised separately with private temporary directories.
     createTrace: () => ({
@@ -240,7 +243,7 @@ function setup(t: TestContext, audioMode: "pcm" | "browser" | "native" = "pcm") 
   return {
     latestControl, finishSpoken, spokenRequest,
     replyQuestion: spokenRequest,
-    pi, ctx, command, fire, events, handlers, notices, statuses, widgets, entries, providers, sent, spoken, quiet,
+    pi, ctx, command, fire, events, handlers, notices, statuses, widgets, entries, providers, sent, spoken, quiet, tools,
     summaryCalls, initialContexts, customMessages,
     setSummarize: (fn: typeof summarize) => { summarize = fn; },
     appended, played, order, live,
@@ -942,6 +945,40 @@ test("ten-minute maximum uses a timer and gracefully stops exactly once", async 
   t.mock.timers.tick(10 * 60_000);
   await flush();
   assert.equal(h.counts().closeCalls, 1);
+});
+
+// Source only: not executed. Root tool availability must not require starting /talk.
+test("webcam presentation works with inactive Talk and owned publisher; legacy call tool stays strict", async t => {
+  let ready = false, starts = 0;
+  let owner = "session-test";
+  const published: unknown[] = [];
+  const h = setup(t, "pcm", () => ({
+    async start() { starts++; ready = true; }, async stop() { ready = false; }, status: () => ready ? "live" : "stopped",
+    presentationReady: () => ready,
+    presentationAuthority: () => ready ? { sessionKey: owner, scopeId: "publisher-generation" } : undefined,
+    presentationSocketPath: () => "/unused/webcam/hud.sock",
+    setPresentationHost() {}, publishPresentation: value => { published.push(value); },
+  }));
+  await h.fire("session_start", {}, h.ctx);
+  assert.equal(starts, 0); assert.equal(h.counts().opens, 0);
+  const show = { action: "show", text: "Standalone explanation" };
+  const webcam = h.tools.get("present_to_webcam"), call = h.tools.get("present_to_call");
+  assert.ok(webcam && call);
+  await assert.rejects(() => webcam.execute("id", show, undefined, undefined, h.ctx), /Webcam sharing is off/);
+  ready = true; // Already explicitly opted-in publisher; tool itself must not start it.
+  const result = await webcam.execute("id", show, undefined, undefined, h.ctx);
+  assert.equal(result.content[0].text, "Presentation published to active webcam feed");
+  assert.equal((published.at(-1) as any).version, 2);
+  await assert.rejects(() => call.execute("id", show, undefined, undefined, h.ctx), /verified connected call/);
+  const foreign = { ...h.ctx, sessionManager: { getSessionId: () => "foreign" } };
+  await assert.rejects(() => webcam.execute("id", show, undefined, undefined, foreign), /different Pi session/);
+  assert.equal((published.at(-1) as any).version, 2, "failed strict/foreign calls leave the panel alone");
+  await h.command("stop");
+  assert.equal((published.at(-1) as any).version, 2, "voice stop does not clear a standalone panel");
+  owner = "foreign";
+  await assert.rejects(() => webcam.execute("id", show, undefined, undefined, h.ctx), /different Pi session/);
+  await assert.rejects(() => webcam.execute("id", show, undefined, undefined, foreign), /publisher unavailable/);
+  assert.equal(starts, 0); assert.equal(h.counts().opens, 0);
 });
 
 test("session_shutdown gracefully cleans up and cancels the maximum-duration timer", async (t) => {

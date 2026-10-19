@@ -1,0 +1,30 @@
+{
+  "contrast_frames" : 149,
+  "device_id" : 35,
+  "dimensions_and_pixel_formats" : {
+    "1280x720\/0x42475241" : 149
+  },
+  "elapsed_seconds" : 5.022438417,
+  "expected_1280x720_bgra_frames" : 149,
+  "frames" : 149,
+  "hash_changes" : 148,
+  "interrupted" : false,
+  "interval_count" : 148,
+  "invalid_frames" : 0,
+  "limitations" : "Sparse RGB hash and luma contrast are diagnostic evidence, not cube recognition. Static standby can have contrast. No format negotiation, PNGs, producer control, or security changes. PTS mean includes only positive finite deltas; arrival timing includes polling jitter.",
+  "lock_errors" : 0,
+  "max_luma_range" : 210,
+  "mean_arrival_interval_ms" : 33.290527871105112,
+  "mean_interval_ms" : 33.336959458333816,
+  "mean_luma_range" : 135.02013422818791,
+  "pixels_sampled_per_frame" : 2304,
+  "queue_callbacks" : 150,
+  "sample_limit" : 10000,
+  "sampled_frames" : 149,
+  "shutdown_drained" : 0,
+  "status" : "motion_and_contrast_observed",
+  "stop_status" : 0,
+  "stream_id" : 36,
+  "unique_hashes" : 149,
+  "unregister_status" : 0
+}

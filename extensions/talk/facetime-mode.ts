@@ -6,6 +6,8 @@ import {
   type FaceTimeClient, type FaceTimeClientCallbacks, type FaceTimeClientOptions, type FaceTimeRecord, type FaceTimeSnapshot,
 } from "./facetime-client.ts";
 
+import { faceTimeCallMedia, validateFaceTimeCallPurpose, type FaceTimeCallMedia } from "./facetime-call.ts";
+
 export interface FaceTimeVoiceHandle {
   setAudioEnabled(enabled: boolean): void;
   introduceOutgoingCall?(purpose?: string): void;
@@ -21,6 +23,10 @@ export interface FaceTimeStatus {
   callId?: string;
   serviceInstanceId?: string;
   audioEnabled?: boolean;
+  /** Outgoing intent, not evidence of a video stream or remote camera state. */
+  requestedMedia?: FaceTimeCallMedia;
+  /** Media label observed by the native call tracker, if available. */
+  observedMedia?: FaceTimeCallMedia;
 }
 export interface FaceTimeModeOptions {
   socketPath?: string;
@@ -32,6 +38,8 @@ export interface FaceTimeModeOptions {
   recipient: string;
   routing: { input: string; output: string };
   onStatus?(status: FaceTimeStatus): void;
+  /** Read-only consumers must invalidate on every ownership/readiness edge. */
+  onAuthorityChange?(): void;
   onEvent?(event: Record<string, unknown>): void;
   /** Only an observed terminal event for a call owned by this mode. */
   onCallEnded?(event: Record<string, unknown>): void;
@@ -45,7 +53,9 @@ export interface FaceTimeMode {
   enable(): Promise<void>;
   disable(): Promise<void>;
   status(): FaceTimeStatus;
-  call(purpose?: string): Promise<unknown>;
+  /** Private evidence only; never wire these identifiers to a renderer. */
+  presentationAuthority?(): { callKey: string } | undefined;
+  call(purpose?: string, media?: FaceTimeCallMedia): Promise<unknown>;
   answer(): Promise<unknown>;
   hangup(): Promise<unknown>;
   /** Explicit request only: share one entire screen by exact display name, never grant remote control. */
@@ -101,11 +111,13 @@ export function acquireFaceTimeLease(socketPath: string): () => void {
 }
 
 interface OwnedCall {
+  generation: string;
   instance: string;
   id?: string;
   identity?: string;
   direction: "incoming" | "outgoing";
   purpose?: string;
+  requestedMedia?: FaceTimeCallMedia;
   controller: AbortController;
   voice?: FaceTimeVoiceHandle;
   preparation?: Promise<void>;
@@ -119,6 +131,8 @@ interface OwnedCall {
   verified: boolean;
   audio: boolean;
   introduced?: boolean;
+  /** Native failure closed voice but still owns UI; never resume this call. */
+  retained?: boolean;
 }
 function safe(fn: () => void) { try { fn(); } catch { /* Notifications do not own lifecycle. */ } }
 function asError(value: unknown): Error { return value instanceof Error ? value : new Error("FaceTime operation failed"); }
@@ -142,17 +156,29 @@ export function createFaceTimeMode(options: FaceTimeModeOptions): FaceTimeMode {
   let instance: string | undefined;
   let seq = -1;
   let observed: FaceTimeRecord = { phase: "idle" };
+  let supportsVideoCalls = false;
   let blocked: string | undefined;
   let owned: OwnedCall | undefined;
   const stopping = new Set<Promise<void>>();
   const stoppedVoices = new WeakSet<FaceTimeVoiceHandle>();
 
+  function authorityChanged() { safe(() => options.onAuthorityChange?.()); }
+  function presentationAuthority(): { callKey: string } | undefined {
+    const session = owned;
+    if (!session || !live(session) || !state.connected || !session.verified || !session.audio || !session.voice
+      || !session.id || session.id !== callId(observed) || observed.phase !== "connected" || observed.verified !== true) return undefined;
+    return { callKey: JSON.stringify([session.instance, session.id, session.generation]) };
+  }
   function publish(phase: string, error?: string) {
+    authorityChanged();
     state = {
       enabled: state.enabled, connected: state.connected, phase,
       serviceInstanceId: instance, callId: owned?.id ?? callId(observed),
       identity: owned?.identity ?? (typeof observed.identity === "string" ? observed.identity : undefined),
-      audioEnabled: owned?.audio ?? false, ...(error ? { error } : {}),
+      audioEnabled: owned?.audio ?? false,
+      requestedMedia: owned?.requestedMedia,
+      observedMedia: observed.media === "audio" || observed.media === "video" ? observed.media : undefined,
+      ...(error ? { error } : {}),
     };
     safe(() => options.onStatus?.({ ...state }));
   }
@@ -170,6 +196,7 @@ export function createFaceTimeMode(options: FaceTimeModeOptions): FaceTimeMode {
   }
   function cancelVoice(session: OwnedCall) {
     session.audio = false;
+    authorityChanged();
     const voice = session.voice;
     session.voice = undefined;
     // Gate before abort handlers can tear down the native peer/voice handle.
@@ -182,10 +209,17 @@ export function createFaceTimeMode(options: FaceTimeModeOptions): FaceTimeMode {
     if (previous) cancelVoice(previous);
   }
   function live(session: OwnedCall): boolean {
-    return state.enabled && ready && owned === session && !session.controller.signal.aborted && !session.ending
+    return state.enabled && ready && owned === session && !session.controller.signal.aborted && !session.ending && !session.retained
       && instance === session.instance;
   }
-  function standby() { publish(!state.connected ? "unavailable" : active(observed) ? "busy" : "standby"); }
+  function standby() {
+    publish(!state.connected ? "unavailable" : observed.phase === "unconfirmed" || owned?.retained ? "unconfirmed" : active(observed) ? "busy" : "standby");
+  }
+  function retain(session: OwnedCall) {
+    session.retained = true;
+    session.verified = false;
+    cancelVoice(session);
+  }
   function validatePolicy(snapshot: FaceTimeSnapshot, checkRouting = true) {
     if (faceTimeRecord(snapshot.permission).trusted !== true) throw new Error("FaceTime Accessibility permission is not trusted; enable the external service in System Settings > Privacy & Security > Accessibility");
     const configuration = faceTimeRecord(snapshot.configuration);
@@ -221,7 +255,12 @@ export function createFaceTimeMode(options: FaceTimeModeOptions): FaceTimeMode {
     }
   }
   function enableAudio(session: OwnedCall) {
-    if (!live(session) || !session.voice || session.audio || !session.verified || session.id !== callId(observed)) return;
+    if (!live(session) || !session.voice || !session.verified || session.id !== callId(observed)) return;
+    if (session.requestedMedia && (observed.media === "audio" || observed.media === "video") && observed.media !== session.requestedMedia) {
+      operationFailed(session, new Error(`FaceTime observed ${observed.media} differs from requested ${session.requestedMedia}; audio remains gated, check FaceTime manually, do not retry`));
+      return;
+    }
+    if (session.audio) return;
     try {
       session.voice.setAudioEnabled(true);
       if (!live(session)) return;
@@ -267,7 +306,7 @@ export function createFaceTimeMode(options: FaceTimeModeOptions): FaceTimeMode {
     return session.preparation;
   }
   function newOwned(direction: OwnedCall["direction"], identity?: string, id?: string): OwnedCall {
-    return { instance: instance!, id, identity, direction, controller: new AbortController(), answerSent: false,
+    return { generation: randomUUID(), instance: instance!, id, identity, direction, controller: new AbortController(), answerSent: false,
       callSent: false, hangupSent: false, ending: false, verified: false, audio: false };
   }
   function operationFailed(session: OwnedCall, error: unknown, controller = session.controller) {
@@ -301,6 +340,7 @@ export function createFaceTimeMode(options: FaceTimeModeOptions): FaceTimeMode {
     return session.action;
   }
   function resume(session: OwnedCall) {
+    if (session.retained) { publish("unconfirmed"); return; }
     if (session.ending) { publish("ending"); return; }
     if (session.controller.signal.aborted) {
       session.controller = new AbortController();
@@ -328,22 +368,31 @@ export function createFaceTimeMode(options: FaceTimeModeOptions): FaceTimeMode {
     if (snapshot.serviceInstanceId === instance && snapshot.seq < seq) throw new Error("FaceTime snapshot sequence regressed");
     const epoch = ++connection;
     ready = false;
+    authorityChanged();
     instance = snapshot.serviceInstanceId;
     seq = snapshot.seq;
     observed = { ...snapshot.call };
+    const callMedia = faceTimeRecord(snapshot.configuration).callMedia;
+    supportsVideoCalls = Array.isArray(callMedia) && callMedia.includes("video");
     state.connected = true;
     if (!initialized) return;
     // Reconciliation never answers an incoming snapshot or adopts an unrelated call.
     if (owned && (owned.instance !== instance || owned.id !== callId(observed) || !active(observed))) forget();
     blocked = active(observed) ? `${instance}/${callId(observed)}` : undefined;
-    if (owned) owned.verified = observed.phase === "connected" && observed.verified === true;
+    if (owned) {
+      if (observed.phase === "unconfirmed" || owned.retained) {
+        observed = { ...observed, phase: "unconfirmed", verified: false };
+        retain(owned);
+      } else owned.verified = observed.phase === "connected" && observed.verified === true;
+    }
     publish("reconciling");
     const current = client!;
     const valid = () => state.enabled && client === current && connection === epoch;
     void configureRouting(current, valid, false).then(() => {
       if (!valid()) return;
       ready = true;
-      if (owned?.verified) resume(owned);
+      if (owned?.retained) publish("unconfirmed");
+      else if (owned?.verified) resume(owned);
       else if (owned) publish(owned.ending ? "ending" : "waiting");
       else standby();
     }).catch((error) => { if (valid()) { publish("unavailable", asError(error).message); report(error); } });
@@ -357,10 +406,11 @@ export function createFaceTimeMode(options: FaceTimeModeOptions): FaceTimeMode {
     const name = event.event;
     const id = callId(event);
     if (typeof name === "string" && name.startsWith("call.") && id) {
-      const terminal = name === "call.ended" || name === "call.failed";
+      const retained = name === "call.failed" && event.status === "retained";
+      const terminal = name === "call.ended" || (name === "call.failed" && !retained);
       if (terminal) {
-        const ownedTerminal = owned?.id === id || !!(owned && !owned.id && owned.callSent);
-        if (ownedTerminal) forget();
+        const ownedTerminal = owned?.id === id || !!(owned && !owned.id && owned.callSent && !owned.retained);
+        if (ownedTerminal || (owned?.retained && !owned.id && callId(observed) === id)) forget();
         if (callId(observed) === id) { observed = { phase: "idle" }; blocked = undefined; }
         if (ready) standby();
         if (ownedTerminal) safe(() => options.onCallEnded?.(event));
@@ -374,11 +424,21 @@ export function createFaceTimeMode(options: FaceTimeModeOptions): FaceTimeMode {
           forget();
         }
         const same = callId(observed) === id;
-        const phase = name === "call.incoming" ? "incoming" : name === "call.connected" ? "connected"
+        // A retained failure can precede the response. Close pending voice,
+        // but only that response may establish the outgoing hangup target.
+        // An unrelated event or snapshot must never authorize adoption.
+        if (retained && owned && !owned.id && owned.callSent) retain(owned);
+        const unconfirmed = retained || (same && observed.phase === "unconfirmed") || (owned?.id === id && owned.retained);
+        if (retained) blocked = `${instance}/${id}`;
+        if (unconfirmed && owned?.id === id) retain(owned);
+        const phase = unconfirmed ? "unconfirmed" : name === "call.incoming" ? "incoming" : name === "call.connected" ? "connected"
           : name === "call.dialing" ? "dialing" : same ? observed.phase : "unknown";
         observed = { ...(same ? observed : {}), ...event, phase,
-          ...(name === "call.incoming" ? { allowed: event.allowed === true } : {}) };
-        if (owned?.id === id && name === "call.connected" && event.verified === true) {
+          ...(name === "call.incoming" ? { allowed: event.allowed === true } : {}),
+          ...(unconfirmed ? { verified: false } : {}) };
+        if (unconfirmed) {
+          if (ready) publish("unconfirmed");
+        } else if (owned?.id === id && name === "call.connected" && event.verified === true) {
           owned.verified = true;
           if (ready) {
             if (owned.controller.signal.aborted) resume(owned);
@@ -389,6 +449,7 @@ export function createFaceTimeMode(options: FaceTimeModeOptions): FaceTimeMode {
         } else if (ready && !owned) standby();
       }
     }
+    authorityChanged();
     safe(() => options.onEvent?.(event));
   }
   async function endOwned(): Promise<unknown> {
@@ -416,7 +477,7 @@ export function createFaceTimeMode(options: FaceTimeModeOptions): FaceTimeMode {
     session.endingRequest = !session.id && session.callRequest
       ? session.callRequest.then(hangupWhenIdentified)
       : Promise.resolve().then(hangupWhenIdentified);
-    publish("ending");
+    publish(session.retained ? "unconfirmed" : "ending");
     return session.endingRequest;
   }
   async function sharingRequest(command: "screen.share" | "screen.stop", display?: string): Promise<unknown> {
@@ -531,19 +592,22 @@ export function createFaceTimeMode(options: FaceTimeModeOptions): FaceTimeMode {
   return {
     enable, disable,
     status: () => ({ ...state }),
+    presentationAuthority,
     answer: incoming,
-    async call(purpose) {
+    async call(purpose, requestedMedia) {
+      const media = faceTimeCallMedia(requestedMedia);
       const to = options.recipient;
       if (typeof to !== "string" || !to.trim() || Buffer.byteLength(to) > 1024) throw new Error("Invalid configured FaceTime owner recipient");
-      if (purpose !== undefined && (typeof purpose !== "string" || !purpose.trim() || Buffer.byteLength(purpose) > 300 ||
-        Buffer.from(purpose).toString("utf8") !== purpose || /[\x00-\x08\x0b-\x1f\x7f-\x9f\u202a-\u202e\u2066-\u2069]/u.test(purpose))) {
-        throw new Error("FaceTime call purpose must be nonempty safe text, at most 300 UTF-8 bytes");
-      }
+      validateFaceTimeCallPurpose(purpose);
       if (!state.enabled || !ready || !client) throw new Error("FaceTime mode is unavailable");
+      // Older protocol-1 services ignore unknown arguments and dial audio.
+      // Never submit video until this service explicitly advertises support.
+      if (media === "video" && !supportsVideoCalls) throw new Error("FaceTime video requires an updated native bridge advertising video callMedia support; no call submitted");
       if (owned || active(observed)) throw new Error("A FaceTime call is already active; no takeover");
       const current = client;
       const session = newOwned("outgoing", to);
       session.purpose = purpose?.trim();
+      session.requestedMedia = media;
       const controller = session.controller;
       owned = session;
       publish("preparing");
@@ -555,18 +619,26 @@ export function createFaceTimeMode(options: FaceTimeModeOptions): FaceTimeMode {
         session.callRequest = Promise.resolve().then(() => {
           if (!live(session)) throw new Error("FaceTime outgoing call cancelled before submission");
           session.callSent = true;
-          return current.request("call", { to });
+          return current.request("call", { to, media });
         }).then((result) => {
           if (owned !== session || client !== current || instance !== session.instance) throw new Error("FaceTime outgoing call cancelled; no longer owned, outcome unknown");
           const id = callId(faceTimeRecord(result));
           if (!id) throw new Error("FaceTime call response omitted callId; outcome unknown, not retried");
-          if (active(observed) && callId(observed) !== id) { forget(); throw new Error("FaceTime call changed; refusing takeover"); }
+          if (active(observed) && callId(observed) !== id) { forget(); standby(); throw new Error("FaceTime call changed; refusing takeover"); }
           session.id = id;
+          if (faceTimeRecord(result).status === "retained") {
+            observed = { ...observed, phase: "unconfirmed", callId: id, verified: false };
+            blocked = `${instance}/${id}`;
+            retain(session);
+            publish("unconfirmed");
+          }
           if (!active(observed)) observed = { phase: "starting", callId: id, identity: to, direction: "outgoing" };
-          session.verified = observed.phase === "connected" && observed.verified === true;
-          return result;
+          session.verified = !session.retained && observed.phase === "connected" && observed.verified === true;
+          // Submission/URL acceptance proves neither connection nor active video.
+          return { ...faceTimeRecord(result), requestedMedia: media };
         });
         const result = await session.callRequest;
+        if (session.retained) throw new Error("FaceTime call is unconfirmed; review UI manually, do not retry");
         if (!live(session)) throw new Error("FaceTime outgoing call cancelled; outcome unknown");
         enableAudio(session);
         return result;

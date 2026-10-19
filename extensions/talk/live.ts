@@ -1,6 +1,7 @@
 import { randomUUID } from "node:crypto";
 import WebSocket, { type RawData } from "ws";
 import { liveServiceError } from "./diagnostics.ts";
+import type { TalkVisualPhase } from "./webcam/src/shared/live-protocol.ts";
 
 export interface LiveTurn {
   id: string;
@@ -17,7 +18,17 @@ export interface LiveTranscript {
   itemId?: string;
 }
 
+/** Caption-only source data. Identities are protocol aliases, retained locally only.
+ * Fragments append; authoritative finals replace the whole utterance. */
+export interface LiveCaption {
+  role: "user" | "assistant";
+  text: string;
+  final: boolean;
+  identities: string[];
+}
+
 export interface LiveCallbacks {
+  onCaption?(caption: LiveCaption): void;
   onAudio(pcm: Buffer): void;
   onTranscript(role: "user" | "assistant", delta: string, startMs: number, endMs: number, source?: "delta" | "final", metadata?: LiveTranscript): void;
   onTurn?(role: "user" | "assistant", text: string, turn?: LiveTurn): void;
@@ -25,6 +36,8 @@ export interface LiveCallbacks {
   onDelegation(id: string, offsetMs: number, input?: string, metadata?: LiveDelegation): void;
   onConnectUrl?(url: string): void;
   onProgress?(message: string): void;
+  /** Structured presentation state; never interpreted as call authorization. */
+  onPhase?(phase: TalkVisualPhase): void;
   onError(error: Error): void;
   onClosed(info: { confirmed: boolean; seconds?: number; reason?: string }): void;
 }

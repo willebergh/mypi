@@ -22,6 +22,7 @@ import type { LiveCallbacks, LiveSession } from "./live.ts";
 import { openCodex } from "./codex.ts";
 import { startPlayer, type Player } from "./player.ts";
 import { createTalkWidget } from "./widget.ts";
+import { createTalkCaptions } from "./captions.ts";
 import { createTalkTerminalContext } from "./terminal-context.ts";
 import { createTalkTrace, type TalkTraceSink } from "./trace.ts";
 import { createNativePeer, diagnoseNativeVirtualAudio, listNativeDevices, type NativeAudioSelection, type NativeVirtualAudioDiagnostics } from "./native-peer.ts";
@@ -30,10 +31,16 @@ import { createFaceTimeMode, type FaceTimeVoiceHandle } from "./facetime-mode.ts
 import { getTalkConfigPath, loadTalkFaceTimeRecipient } from "./config.ts";
 import { VIRTUAL_AUDIO_INTERNAL_NAME, VIRTUAL_AUDIO_VISIBLE_NAME, type ManagedVirtualAudio } from "./virtual-audio.ts";
 import { createFaceTimeTools } from "./facetime-tools.ts";
+import { parseFaceTimeCallArguments } from "./facetime-call.ts";
+import { registerWebcamBridge, type WebcamBridge } from "./webcam-bridge.ts";
+import { createCallPresentationController, registerCallPresentationTool, registerWebcamPresentationTool, type PresentationAuthority } from "./webcam-presentation.ts";
+import { launchPrebuiltWebcam } from "./webcam-launcher.ts";
+import { TALK_CAPTIONS_EVENT, TALK_VISUAL_EVENT, captionCallActive, idleTalkVisual, type TalkVisualPhase, type TalkVisualState } from "./webcam/src/shared/live-protocol.ts";
 
 type CloseInfo = Awaited<ReturnType<LiveSession["close"]>>;
 interface TalkRun {
   ctx: ExtensionContext;
+  sessionKey: string;
   controller: AbortController;
   state: "starting" | "active" | "closing";
   live?: LiveSession;
@@ -51,7 +58,10 @@ interface TalkRun {
   errorReported?: boolean;
   browserUrl?: string;
   progress?: string;
+  visualPhase?: TalkVisualPhase;
+  visualRunId?: string;
   widget: ReturnType<typeof createTalkWidget>;
+  captions: ReturnType<typeof createTalkCaptions>;
   questions?: ReturnType<typeof createTalkQuestionChannel>;
   stopControl?: ReturnType<typeof createTalkStopControl>;
   stopQuestionBlocked?: boolean;
@@ -95,6 +105,8 @@ interface TalkDependencies {
   startPlayer: typeof startPlayer;
   audioMode?: "pcm" | "native" | "browser";
   modelName?: string;
+  createWebcamBridge?: (pi: ExtensionAPI) => Pick<WebcamBridge, "start" | "stop" | "status"> & Partial<WebcamBridge>;
+  launchWebcam?: typeof launchPrebuiltWebcam;
 }
 
 const MAX_SESSION_MS = 10 * 60_000;
@@ -128,14 +140,63 @@ export function registerTalk(pi: ExtensionAPI, dependencies: TalkDependencies = 
   startRecorder, startPlayer, audioMode: "native", modelName: "gpt-live-1-codex",
 }) {
   pi.registerMessageRenderer(TALK_HISTORY_TYPE, renderTalkHistory);
+  let shuttingDown = false;
+  let webcamIntent = 0;
+  let currentPiSession: string | undefined;
+  // Register this synchronous fence BEFORE bridge cleanup can await a pending start.
+  pi.on("session_shutdown", () => {
+    shuttingDown = true;
+    active?.bridge?.close();
+    active?.terminalContext?.close();
+    presentation.reset();
+    faceTimeGeneration++;
+    faceTimeStarting = false;
+    webcamIntent++;
+  });
+  const webcam = (dependencies.createWebcamBridge ?? registerWebcamBridge)(pi);
   const managedAudio = dependencies.audioMode === "native" || dependencies.audioMode === "browser";
   let active: TalkRun | undefined;
+  function currentBridge() {
+    const run = active;
+    if (!run || shuttingDown || run.state !== "active" || run.controller.signal.aborted) return;
+    if (run.sessionKey !== run.ctx.sessionManager.getSessionId()) {
+      run.bridge?.close();
+      return;
+    }
+    return run.bridge;
+  }
   let dictation: DictationState = "idle";
   let devicePicker: AbortController | undefined;
   let faceTimeMode: ReturnType<typeof createFaceTimeMode> | undefined;
   let faceTimeStarting = false;
   let faceTimeGeneration = 0;
   let faceTimeContext: ExtensionContext | undefined;
+  function currentPresentationCall(): PresentationAuthority | undefined {
+    const run = active;
+    const call = faceTimeMode?.presentationAuthority?.();
+    if (shuttingDown || !call || !run?.faceTime || run.state !== "active" || !run.audioReady || !run.audioEnabled
+      || run.controller.signal.aborted || !run.visualRunId || !faceTimeContext || run.ctx !== faceTimeContext) return undefined;
+    const sessionKey = run.ctx.sessionManager.getSessionId();
+    if (sessionKey !== run.sessionKey || sessionKey !== faceTimeContext.sessionManager.getSessionId()) return undefined;
+    return { sessionKey, callKey: call.callKey, runId: run.visualRunId, owned: true, verified: true, connected: true };
+  }
+  const presentation = createCallPresentationController({
+    currentCall: currentPresentationCall,
+    currentPublisher: () => shuttingDown ? undefined : webcam.presentationAuthority?.(),
+    sharingActive: () => webcam.status() !== "stopped",
+    publisherReady: () => !shuttingDown && !!currentPiSession && webcam.presentationReady?.() === true
+      && webcam.presentationAuthority?.()?.sessionKey === currentPiSession
+      && typeof webcam.publishPresentation === "function" && typeof webcam.presentationSocketPath === "function"
+      && typeof webcam.setPresentationHost === "function" && typeof webcam.presentationAuthority === "function",
+    socketPath: () => webcam.presentationSocketPath?.() ?? "",
+    publish: value => webcam.publishPresentation?.(value),
+  });
+  function syncPresentation() {
+    try { presentation.sync(); } catch { presentation.reset(); } // Cleanup uncertainty fails closed.
+  }
+  webcam.setPresentationHost?.({ current: currentPresentationCall, reset: () => presentation.reset(), sync: syncPresentation });
+  registerCallPresentationTool(pi, presentation);
+  registerWebcamPresentationTool(pi, presentation);
   const faceTimeTools = createFaceTimeTools(pi, () => faceTimeMode);
   const activity = createTalkActivity();
   const trace = (dependencies.createTrace ?? createTalkTrace)({
@@ -148,7 +209,10 @@ export function registerTalk(pi: ExtensionAPI, dependencies: TalkDependencies = 
   let controlTrace = trace.session("control");
   const publish = (state: TalkState) => {
     pi.events.emit(TALK_CHANGED_EVENT, state);
-    if (state === "idle") pi.events.emit(TALK_STATUS_CHANGED_EVENT, { state: "idle" });
+    if (state === "idle") {
+      pi.events.emit(TALK_STATUS_CHANGED_EVENT, { state: "idle" });
+      pi.events.emit(TALK_VISUAL_EVENT, idleTalkVisual());
+    }
   };
 
   function clearRecordedCaptions(run: TalkRun) {
@@ -158,8 +222,22 @@ export function registerTalk(pi: ExtensionAPI, dependencies: TalkDependencies = 
 
   function render(run: TalkRun) {
     if (active !== run) return;
+    syncPresentation();
     const elapsedMs = run.startedAt === undefined ? undefined
       : run.state === "closing" ? run.elapsedMs : performance.now() - run.startedAt;
+    const visual: TalkVisualState = {
+      phase: run.state === "closing" ? (run.errorReported ? "error" : "stopping")
+        : run.state === "active" ? (run.audioReady ? "connected" : "ready")
+        : run.visualPhase ?? "preparing",
+      mode: run.faceTime ? "facetime" : run.virtualAudio ? "virtual" : "physical",
+      runId: run.visualRunId,
+      voiceReady: run.state === "active",
+      audioEnabled: run.state === "active" && run.audioReady === true && (!run.faceTime || run.audioEnabled === true),
+      ...(elapsedMs === undefined ? {} : { elapsedMs }),
+    };
+    run.captions.gate(captionCallActive(visual));
+    pi.events.emit(TALK_VISUAL_EVENT, visual);
+    pi.events.emit(TALK_CAPTIONS_EVENT, run.captions.snapshot());
     pi.events.emit(TALK_STATUS_CHANGED_EVENT, {
       state: run.state === "closing" ? "closing" : run.state === "active" && run.audioReady ? "listening" : "connecting",
       ...(run.state === "starting" && run.progress ? { detail: run.progress }
@@ -204,6 +282,7 @@ export function registerTalk(pi: ExtensionAPI, dependencies: TalkDependencies = 
   }
 
   function stop(run: TalkRun, graceful = true): Promise<void> {
+    presentation.clearCall();
     if (run.cleanup) return run.cleanup;
     if (run.startedAt !== undefined) run.elapsedMs = performance.now() - run.startedAt;
     run.state = "closing";
@@ -302,8 +381,10 @@ export function registerTalk(pi: ExtensionAPI, dependencies: TalkDependencies = 
           sessionTrace.record(direction, event);
         },
       },
-      ctx, controller: new AbortController(), state: "starting", widget: createTalkWidget(),
+      ctx, sessionKey: ctx.sessionManager.getSessionId(), controller: new AbortController(), state: "starting", widget: createTalkWidget(),
+      captions: createTalkCaptions(callId),
       faceTime: options.faceTime, audioEnabled: !options.faceTime,
+      visualPhase: "preparing", visualRunId: callId,
       updates: [], userTurnActive: false, questionAnswerConsumed: false,
       questionnaireUsed: false, projectSpeech: "", projectSpeechOverflow: false, questionChoices: [], delegationIds: new Set(),
       progress: managedAudio ? `Reading Pi credentials and preparing ${dependencies.audioMode} audio…`
@@ -422,6 +503,7 @@ export function registerTalk(pi: ExtensionAPI, dependencies: TalkDependencies = 
         ...(accountId ? { "chatgpt-account-id": accountId } : {}),
       };
       run.progress = "Summarizing this Pi conversation…";
+      run.visualPhase = "summarizing";
       render(run);
       let summary: string | undefined;
       try { summary = await (dependencies.summarizeContext ?? summarizeTalkContext)(ctx, run.controller.signal); }
@@ -452,8 +534,17 @@ export function registerTalk(pi: ExtensionAPI, dependencies: TalkDependencies = 
             run.player?.append(pcm);
           }
         },
+        onCaption: (event) => {
+          if (active !== run || run.state === "closing" || run.controller.signal.aborted) return;
+          // Independent read-only display path. Never feed captions to history,
+          // questionnaire/Stop controls, terminal context, or provider requests.
+          run.captions.update(event);
+          pi.events.emit(TALK_CAPTIONS_EVENT, run.captions.snapshot());
+        },
         onTurnStart: (role, id) => {
-          if (active !== run || run.state === "closing" || !run.audioEnabled) return;
+          if (active !== run || run.state === "closing") return;
+          run.captions.start(role, id);
+          if (!run.audioEnabled) return;
           run.stopControl?.turnStart(role, id);
           run.history?.start(role, id);
           run.widget.start(role, id);
@@ -582,6 +673,11 @@ export function registerTalk(pi: ExtensionAPI, dependencies: TalkDependencies = 
             }
           }
         },
+        onPhase: (phase) => {
+          if (active !== run || run.state !== "starting") return;
+          run.visualPhase = phase;
+          render(run);
+        },
         onProgress: (message) => {
           if (active !== run || run.state === "closing") return;
           run.progress = message;
@@ -664,11 +760,19 @@ export function registerTalk(pi: ExtensionAPI, dependencies: TalkDependencies = 
     if (!faceTimeContext || !faceTimeMode) return;
     if (active && active.state !== "closing") { render(active); return; }
     const status = faceTimeMode.status();
+    pi.events.emit(TALK_VISUAL_EVENT, {
+      phase: status.phase === "standby" || status.phase === "busy" ? "standby"
+        : status.phase === "disabled" ? "idle"
+        : status.phase === "unavailable" || status.phase === "failed" ? "error"
+        : "preparing",
+      mode: "facetime", voiceReady: false, audioEnabled: false,
+    } satisfies TalkVisualState);
     pi.events.emit(TALK_STATUS_CHANGED_EVENT, { state: "idle", mode: "facetime",
       detail: safeLiveUpdate(status.phase).replace(/\s+/g, " ").slice(0, 160) });
   }
 
   async function disableFaceTime() {
+    presentation.clearCall();
     faceTimeGeneration++;
     const mode = faceTimeMode;
     faceTimeMode = undefined;
@@ -681,6 +785,7 @@ export function registerTalk(pi: ExtensionAPI, dependencies: TalkDependencies = 
   }
 
   async function enableFaceTime(ctx: ExtensionContext) {
+    if (shuttingDown) return;
     if (ctx.mode !== "tui" || dependencies.audioMode !== "native") {
       ctx.ui.notify("FaceTime standby requires native Talk in Pi's interactive terminal.", "warning");
       return;
@@ -692,9 +797,19 @@ export function registerTalk(pi: ExtensionAPI, dependencies: TalkDependencies = 
     const generation = ++faceTimeGeneration;
     faceTimeStarting = true;
     faceTimeContext = ctx;
+    const webcamWasRunning = webcam.status() === "live";
+    const intent = ++webcamIntent;
+    let acquiredWebcam = false;
+    let standbyEnabled = false;
     try {
       const virtual = validateManagedVirtualAudio((await (dependencies.loadAudioProfiles ?? loadTalkAudioProfiles)()).virtual);
       const recipient = await (dependencies.loadFaceTimeRecipient ?? loadTalkFaceTimeRecipient)(dependencies.talkConfigPath);
+      if (generation !== faceTimeGeneration || !faceTimeStarting || faceTimeContext !== ctx) return;
+      // Explicit /talk facetime also owns the read-only HUD feed, never an app build.
+      await webcam.start(ctx);
+      acquiredWebcam = !webcamWasRunning;
+      if (generation !== faceTimeGeneration || !faceTimeStarting || faceTimeContext !== ctx) return;
+      await (dependencies.launchWebcam ?? launchPrebuiltWebcam)({ agentDir: getAgentDir() });
       if (generation !== faceTimeGeneration || !faceTimeStarting || faceTimeContext !== ctx) return;
       const mode = (dependencies.createFaceTimeMode ?? createFaceTimeMode)({
         configPath: dependencies.talkConfigPath ?? getTalkConfigPath(),
@@ -728,7 +843,8 @@ export function registerTalk(pi: ExtensionAPI, dependencies: TalkDependencies = 
             async stop() { run.faceTimeOwnerStop = true; await stop(run, false); },
           };
         },
-        onStatus() { if (faceTimeMode === mode) renderFaceTimeStatus(); },
+        onAuthorityChange() { if (faceTimeMode === mode) syncPresentation(); },
+        onStatus() { if (faceTimeMode === mode) { syncPresentation(); renderFaceTimeStatus(); } },
         onEvent(event) {
           if (faceTimeMode === mode) controlTrace.record("local", { type: "facetime.event", event });
         },
@@ -750,8 +866,13 @@ export function registerTalk(pi: ExtensionAPI, dependencies: TalkDependencies = 
       });
       faceTimeMode = mode;
       await mode.enable();
-      if (faceTimeMode !== mode) { await mode.disable(); return; }
+      if (faceTimeMode !== mode || generation !== faceTimeGeneration || shuttingDown) {
+        if (faceTimeMode === mode) faceTimeMode = undefined;
+        await mode.disable();
+        return;
+      }
       faceTimeTools.setAvailable(true);
+      standbyEnabled = true;
       renderFaceTimeStatus();
       ctx.ui.notify("FaceTime standby is on. Allowlisted incoming calls are answered when Talk is ready. /talk facetime answer|hangup controls the current call; /talk stop exits standby. Manual sharing only: /talk facetime share DISPLAY (exact name, entire screen only, remote control off), /talk facetime stop-sharing. Never shares automatically. Pi work is not aborted.", "info");
     } catch (error) {
@@ -759,16 +880,39 @@ export function registerTalk(pi: ExtensionAPI, dependencies: TalkDependencies = 
         await disableFaceTime();
         ctx.ui.notify(error instanceof Error ? error.message : "Could not enable FaceTime standby", "error");
       }
-    } finally { if (generation === faceTimeGeneration) faceTimeStarting = false; }
+    } finally {
+      if (!standbyEnabled && acquiredWebcam && intent === webcamIntent) await webcam.stop();
+      if (generation === faceTimeGeneration) faceTimeStarting = false;
+    }
   }
 
   pi.registerCommand("talk", {
-    description: "Talk: /talk [start [virtual]|stop|status|facetime [status|call [--reason PURPOSE]|answer|hangup|share DISPLAY|stop-sharing]|devices [physical|diagnostics] [reset]|log on|off|status]. Sharing is manual, entire screen only, exact display name, remote control off.",
+    description: "Talk: /talk [start [virtual]|stop|status|webcam [on|off|status]|facetime [status|call [--audio|--video] [--reason PURPOSE]|answer|hangup|share DISPLAY|stop-sharing]|devices [physical|diagnostics] [reset]|log on|off|status]. Calls default to audio. Sharing is manual, entire screen only, exact display name, remote control off.",
     handler: async (args, ctx) => {
       const action = args.trim().toLowerCase();
+      if (shuttingDown && !["status", "log status", "webcam status", "log off", "stop"].includes(action)) return;
       const deviceCommand = /^devices(?:\s+(physical|diagnostics))?(?:\s+(reset))?$/.exec(action);
-      if (action === "facetime") {
-        await enableFaceTime(ctx);
+      const webcamCommand = /^webcam(?:\s+(on|off|status))?$/.exec(action);
+      if (webcamCommand) {
+        if (ctx.mode !== "tui") { ctx.ui.notify("Webcam sharing requires Pi's interactive terminal.", "warning"); return; }
+        try {
+          if (webcamCommand[1] === "off") { presentation.reset(); webcamIntent++; await webcam.stop(); }
+          else if (webcamCommand[1] !== "status") {
+            webcamIntent++;
+            await webcam.start(ctx);
+            if (active) render(active); else if (faceTimeMode) renderFaceTimeStatus(); else publish("idle");
+          }
+          ctx.ui.notify(webcam.status(), "info");
+        } catch (error) { ctx.ui.notify(error instanceof Error ? error.message : "Could not enable the webcam HUD feed.", "error"); }
+      } else if (action === "facetime") {
+        if (faceTimeMode?.status().enabled) {
+          try {
+            webcamIntent++;
+            await webcam.start(ctx);
+            await (dependencies.launchWebcam ?? launchPrebuiltWebcam)({ agentDir: getAgentDir() });
+            renderFaceTimeStatus();
+          } catch (error) { ctx.ui.notify(error instanceof Error ? error.message : "Could not open the prebuilt webcam app.", "error"); }
+        } else await enableFaceTime(ctx);
       } else if (action.startsWith("facetime ")) {
         const mode = faceTimeMode;
         if (!mode?.status().enabled) { ctx.ui.notify("Enable /talk facetime first.", "warning"); return; }
@@ -787,12 +931,10 @@ export function registerTalk(pi: ExtensionAPI, dependencies: TalkDependencies = 
             if (!/^facetime\s+stop-sharing$/i.test(args.trim())) { ctx.ui.notify("Usage: /talk facetime stop-sharing", "warning"); return; }
             ctx.ui.notify(JSON.stringify((await mode.stopSharing()) ?? {}), "info");
           } else if (subcommand === "call") {
-            const request = args.trim().split(/\s+/).slice(2).join(" ");
-            const withReason = /^--reason(?:\s+([\s\S]*))?$/i.exec(request);
-            if (request && !withReason) { ctx.ui.notify("Usage: /talk facetime call [--reason CALL_PURPOSE]", "warning"); return; }
-            const reason = withReason ? (withReason[1] ?? "").trim() : undefined;
-            ctx.ui.notify(JSON.stringify((await mode.call(reason)) ?? {}), "info");
-          } else ctx.ui.notify("Usage: /talk facetime [status|call [--reason CALL_PURPOSE]|answer|hangup|share DISPLAY|stop-sharing] (sharing: entire screen only, exact display name, remote control off)", "warning");
+            const request = args.trim().replace(/^facetime\s+call(?:\s+|$)/i, "");
+            const { purpose, media } = parseFaceTimeCallArguments(request);
+            ctx.ui.notify(JSON.stringify((await mode.call(purpose, media)) ?? {}), "info");
+          } else ctx.ui.notify("Usage: /talk facetime [status|call [--audio|--video] [--reason CALL_PURPOSE]|answer|hangup|share DISPLAY|stop-sharing] (sharing: entire screen only, exact display name, remote control off)", "warning");
         } catch (error) { ctx.ui.notify(error instanceof Error ? error.message : "FaceTime action could not be confirmed; do not retry automatically.", "error"); }
       } else if (deviceCommand) {
         if (dependencies.audioMode !== "native") {
@@ -886,16 +1028,19 @@ export function registerTalk(pi: ExtensionAPI, dependencies: TalkDependencies = 
           ].filter(Boolean).join("\n"), "info");
         } else if (faceTimeMode) ctx.ui.notify(`Talk: FaceTime standby\n${JSON.stringify(faceTimeMode.status(), null, 2)}`, "info");
         else ctx.ui.notify("Talk: off", "info");
-      } else ctx.ui.notify("Usage: /talk [start [virtual]|stop|status|facetime [status|call [--reason PURPOSE]|answer|hangup|share DISPLAY|stop-sharing]|devices [physical|diagnostics] [reset]|log on|off|status] (sharing: entire screen only, exact display name, remote control off)", "warning");
+      } else ctx.ui.notify("Usage: /talk [start [virtual]|stop|status|webcam [on|off|status]|facetime [status|call [--audio|--video] [--reason PURPOSE]|answer|hangup|share DISPLAY|stop-sharing]|devices [physical|diagnostics] [reset]|log on|off|status] (sharing: entire screen only, exact display name, remote control off)", "warning");
     },
   });
   pi.on("input", (event) => {
     active?.terminalContext?.input(event.text, event.source, event.streamingBehavior);
-    active?.bridge?.input(event.text, event.source);
+    currentBridge()?.input(event.text, event.source);
   });
   pi.on("before_agent_start", (event, ctx) => {
     active?.stopControl?.operationChanged();
-    const handling = active?.bridge?.beforeStart(event.prompt);
+    const handling = currentBridge()?.beforeStart(
+      event.messageType === "user" ? event.prompt : undefined,
+      event.messageType === "custom" ? event.message : undefined,
+    );
     const hasVoiceContext = !!active || ctx?.sessionManager.getBranch().some((entry) =>
       entry.type === "custom_message" && entry.customType === TALK_HISTORY_TYPE);
     if (handling || hasVoiceContext) return {
@@ -921,20 +1066,26 @@ export function registerTalk(pi: ExtensionAPI, dependencies: TalkDependencies = 
   pi.on("message_end", (event) => {
     if (event.message.role === "user") active?.stopControl?.operationChanged();
     active?.terminalContext?.message(event.message);
-    active?.bridge?.message(event.message);
+    currentBridge()?.message(event.message);
   });
   pi.on("agent_start", () => {
     active?.stopControl?.operationChanged();
-    active?.bridge?.agentStart();
+    currentBridge()?.agentStart();
   });
-  pi.on("agent_settled", () => {
+  pi.on("agent_settled", (event) => {
     active?.stopControl?.operationChanged();
     active?.terminalContext?.settled();
-    active?.bridge?.settled();
+    currentBridge()?.settled(event.aborted);
     updateVoice(["The Pi coding agent's run ended. This status alone does not establish success; rely on its verified result."]);
   });
-  pi.on("tool_execution_start", (event) => updateVoice(activity.toolStart(event)));
-  pi.on("tool_execution_end", (event) => updateVoice(activity.toolEnd(event)));
+  pi.on("tool_execution_start", (event) => {
+    currentBridge()?.toolStart(event);
+    updateVoice(activity.toolStart(event));
+  });
+  pi.on("tool_execution_end", (event) => {
+    currentBridge()?.toolEnd(event);
+    updateVoice(activity.toolEnd(event));
+  });
   pi.events.on(SUBAGENTS_CHANGED_EVENT, (data) => updateVoice(activity.subagents(data)));
   pi.events.on(TODOS_CHANGED_EVENT, (data) => updateVoice(activity.todos(data)));
   pi.events.on(ASK_USER_VOICE_REQUEST_EVENT, (data) => {
@@ -981,17 +1132,24 @@ export function registerTalk(pi: ExtensionAPI, dependencies: TalkDependencies = 
       void stop(active, false);
     }
   });
-  pi.on("session_start", () => {
+  pi.on("session_start", (_event, ctx) => {
+    active?.bridge?.close();
+    active?.terminalContext?.close();
+    presentation.reset();
+    currentPiSession = ctx?.sessionManager.getSessionId();
+    shuttingDown = false;
     announceExtension(pi.events, { id: "talk", label: "talk" });
     publish("idle");
   });
-  pi.on("session_before_tree", async () => { devicePicker?.abort(); await disableFaceTime(); if (active) await stop(active); activity.reset(); });
-  pi.on("session_before_switch", async () => { devicePicker?.abort(); await disableFaceTime(); if (active) await stop(active); activity.reset(); });
+  pi.on("session_before_tree", async () => { active?.bridge?.close(); active?.terminalContext?.close(); presentation.reset(); devicePicker?.abort(); await disableFaceTime(); if (active) await stop(active); activity.reset(); });
+  pi.on("session_before_switch", async () => { active?.bridge?.close(); active?.terminalContext?.close(); presentation.reset(); devicePicker?.abort(); await disableFaceTime(); if (active) await stop(active); activity.reset(); });
   pi.on("session_shutdown", async (_event, ctx) => {
     devicePicker?.abort();
     await disableFaceTime();
     if (active) await stop(active);
     await trace.disable();
+    await webcam.stop();
+    presentation.dispose();
     ctx?.ui.setStatus("talk-log", undefined);
     activity.reset();
   });

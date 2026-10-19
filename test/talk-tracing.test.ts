@@ -37,7 +37,7 @@ test("/talk log is lazy, snapshots the original startup, and controls dynamic tr
   let tracePath = "";
   const pi = {
     registerCommand(name: string, command: any) { commands.set(name, command); },
-    registerMessageRenderer() {},
+    registerMessageRenderer() {}, registerTool() {},
     on(name: string, handler: (...args: any[]) => unknown) { handlers.set(name, [...(handlers.get(name) ?? []), handler]); },
     events: { emit(name: string, value: unknown) { events.push([name, value]); }, on() { return () => {}; } },
     appendEntry() {}, sendUserMessage() {},
@@ -130,7 +130,7 @@ test("invalid log actions and logging failure do not change voice behavior", asy
   let failEnable = true;
   let opens = 0;
   const trace = { async enable() { if (!failEnable) enabled = true; }, async disable() { enabled = false; }, async reset() {}, status() { return { enabled, path: "/private/path", dropped: 3 }; }, session() { return { record() {}, addSecrets() {} }; } };
-  const pi = { registerCommand(name: string, command: any) { commands.set(name, command); }, registerMessageRenderer() {}, on() {}, events: { emit() {}, on() {} }, appendEntry() {}, sendUserMessage() {} } as unknown as ExtensionAPI;
+  const pi = { registerCommand(name: string, command: any) { commands.set(name, command); }, registerMessageRenderer() {}, registerTool() {}, on() {}, events: { emit() {}, on() {} }, appendEntry() {}, sendUserMessage() {} } as unknown as ExtensionAPI;
   const ctx = { mode: "tui", modelRegistry: { getApiKeyForProvider: async () => "token" }, sessionManager: { getSessionId: () => "s" }, model: { provider: "p", id: "m" }, isIdle: () => true,
     ui: { notify(message: string, level: string) { notices.push([message, level]); }, setStatus(key: string, value: string | undefined) { statuses.push([key, value]); }, setWidget() {} } } as unknown as ExtensionContext;
   registerTalk(pi, { audioMode: "native", loadAudioDevices: async () => ({}), createTrace: () => trace, summarizeContext: async () => undefined,
