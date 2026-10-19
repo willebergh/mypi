@@ -58,7 +58,7 @@ export function createTalkCaptions(runId: string, now = Date.now): {
       if (!enabled || [...keys].some(key => retired.has(key))) { retire(keys); return; }
       let entry = entries.get(event.role);
       const turnKeys = [...keys].filter(key => key.startsWith(`${event.role}:turn:`));
-      if (entry?.turnKey && !entry.line.final && turnKeys.some(key => key !== entry.turnKey)) {
+      if (entry?.turnKey && !entry.line.final && turnKeys.some(key => key !== entry!.turnKey)) {
         // An explicit different turn cannot borrow a current item's alias or
         // displace a live announced turn. Wait for its own turn.created edge.
         return;

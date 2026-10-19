@@ -1,6 +1,6 @@
 # FaceTime mode in Talk
 
-FaceTime is an alternative audio/call mode for the **same Pi session**. History, captions, voice delegation, questionnaires, and normal tool permissions use the existing Talk pipeline. FaceTime carries audio through virtual devices; its Unix socket carries control/status only.
+FaceTime is an alternative audio/call mode for Pi. One **main session** owns FaceTime and audio; explicitly connected named sessions can supply the conversation backend. See [multi-session Talk](../MULTISESSION.md) for connection, metadata, handoff and webcam-sharing boundaries. History, captions, voice delegation and normal tool permissions use the existing Talk pipeline; remote voice questionnaires and remote voice Stop are initially unavailable. FaceTime carries audio through virtual devices; its Unix socket carries control/status only.
 
 ## One-time setup
 
@@ -73,7 +73,7 @@ Validation: the macOS 26.6 controls and their active/off values were inspected d
 
 ## Call lifecycle
 
-- One Pi session holds a machine-wide controller lease beside the service socket. Other Pi sessions cannot take control. The Swift service also enforces a single service instance.
+- One main Pi session holds a machine-wide controller lease beside the service socket. Other Pi sessions cannot take control; explicitly connected destinations execute selected voice requests through private local IPC, without opening another audio endpoint or obtaining call controls. The Swift service also enforces a single service instance.
 - An **allowlisted incoming event** prepares one Talk connection with both audio directions gated. Pi requests Answer once it is ready. No existing FaceTime call is adopted when enabling the mode.
 - Both audio directions are enabled only after locally verified `call.connected` evidence: advancing duration for audio; two consecutive complete, same-window/peer participant scenes for outgoing video. Command acceptance/Answer posting alone does not establish connection. Known observed media that conflicts with the requested medium keeps/closes the audio gate and reports an error, without redialing or changing media.
 - Outgoing intent is reported as `requestedMedia`, separately from the native tracker's observed `media` (Pi status: `observedMedia`). Before media is observed, it is unknown—not copied from the request. Neither URL launch, confirmation, an observed video label, nor an advancing duration proves an active video stream or the remote camera is on.

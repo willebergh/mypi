@@ -217,8 +217,8 @@ test('webcam image survives call-only clear, but publisher generation loss remov
 test('webcam tool fails closed on legacy bridges; both registrations hide paths and use invocation session', async () => {
   const t = temporary(), h = harness(t.socket), tools: any[] = [];
   try {
-    registerCallPresentationTool({ registerTool: tool => { tools.push(tool); } } as any, h.controller);
-    registerWebcamPresentationTool({ registerTool: tool => { tools.push(tool); } } as any, h.controller);
+    registerCallPresentationTool({ registerTool: (tool: unknown) => { tools.push(tool); } } as any, h.controller);
+    registerWebcamPresentationTool({ registerTool: (tool: unknown) => { tools.push(tool); } } as any, h.controller);
     assert.deepEqual(tools.map(tool => tool.name), ['present_to_call', 'present_to_webcam']);
     const ctx = { sessionManager: { getSessionId: () => 'private-session' } };
     await assert.rejects(() => tools[1].execute('id', { action: 'show', text: 'no' }, undefined, undefined, ctx), /publisher unavailable/);

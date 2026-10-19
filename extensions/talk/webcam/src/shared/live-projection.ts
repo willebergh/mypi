@@ -1,5 +1,5 @@
-import { captionCallActive, LIVE_HUD_STALE_MS, type LiveHudState, type TalkVisualPhase } from './live-protocol';
-import { parsePresentation } from './presentation-protocol';
+import { captionCallActive, LIVE_HUD_STALE_MS, type LiveHudState, type TalkVisualPhase } from './live-protocol.ts';
+import { parsePresentation } from './presentation-protocol.ts';
 import { mockHudSnapshot, type HudSnapshot, type HudTalkPreflight } from './hud-data.ts';
 
 const phases: readonly TalkVisualPhase[] = ['preparing', 'summarizing', 'starting-native', 'creating-offer', 'connecting-voice', 'connecting-audio', 'ready', 'connected'];
@@ -13,7 +13,9 @@ export const OFFLINE_LIVE_HUD: LiveHudState = { mode: 'live', connection: 'offli
 export function projectLiveHud(state: LiveHudState, timeSeconds = 0, now = Date.now()): HudSnapshot {
   if (state.mode === 'demo') return mockHudSnapshot(timeSeconds, state.demo);
   const s = state.connection === 'live' ? state.snapshot : null;
+  const identity = s ? state.multisession?.sessions.find(row => row.isActive) : undefined;
   const talk = s?.talk;
+  const captions = s?.captions;
   const active = !!talk && talk.mode !== 'inactive' && phases.includes(talk.phase);
   const ready = active && !!talk?.voiceReady && (talk.phase === 'ready' || talk.phase === 'connected');
   const preflight: HudTalkPreflight = {
@@ -25,7 +27,7 @@ export function projectLiveHud(state: LiveHudState, timeSeconds = 0, now = Date.
   };
   return {
     source: s ? 'live' : 'offline', connection: state.connection,
-    session: { id: s?.sessionId ?? '', name: s ? 'Pi session' : `Pi ${state.connection}`, cwd: null, branch: null,
+    session: { id: s?.sessionId ?? '', name: s ? identity?.name || 'Pi session' : `Pi ${state.connection}`, cwd: identity?.cwd ?? null, branch: null,
       provider: s?.session.provider ?? '', model: s?.session.model ?? '', startedAt: s?.session.startedAt ?? null,
       elapsedMs: s?.session.elapsedMs ?? null, status: s?.session.status ?? 'idle' },
     context: { tokens: s?.context.tokens ?? null, contextWindow: s?.context.contextWindow ?? null,
@@ -46,9 +48,9 @@ export function projectLiveHud(state: LiveHudState, timeSeconds = 0, now = Date.
     transcript: s?.transcript?.map(block => ({ id: block.id, role: block.role, text: block.text })) ?? [],
     // Expiry is absolute, not restarted by heartbeat, subscription or renderer
     // creation. Also clear locally if main stops delivering connection updates.
-    captions: s && captionCallActive(s.talk) && s.captions?.runId === s.talk.runId
+    captions: s && captionCallActive(s.talk) && captions && captions.runId === s.talk.runId
       && now - s.timestamp < LIVE_HUD_STALE_MS && s.timestamp - now <= 1000
-      ? s.captions.lines.filter(line => line.expiresAt > now && line.updatedAt <= now + 1000)
+      ? captions.lines.filter(line => line.expiresAt > now && line.updatedAt <= now + 1000)
         .map(line => ({ ...line })) : [],
     ...(s && now - s.timestamp < LIVE_HUD_STALE_MS && s.timestamp - now <= 1000
       && s.presentation ? { presentation: parsePresentation(s.presentation, {

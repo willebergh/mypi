@@ -642,13 +642,14 @@ test("main status/token rate uses event tags and counters, never messages/tool i
   const measured = await peer.next();
   assert.equal(measured.session.status, "running");
   assert.equal(measured.context.tokensPerSecond, 40);
-  await h.event("tool_execution_start", ctx, { toolName: PRIVATE, args: { path: PRIVATE } });
+  await h.event("tool_execution_start", ctx, { toolName: "public_tool", args: { path: PRIVATE } });
   await h.event("message_end", ctx, { message: message(80) });
   await h.event("agent_settled", ctx);
   h.tick();
   const settled = await peer.next();
   assert.equal(settled.session.status, "idle");
   assert.equal(settled.context.tokensPerSecond, 40);
+  assert.ok(settled.events.some(event => event.toolName === "public_tool"), "tool names are public activity; arguments remain private");
   assert.doesNotMatch(JSON.stringify(settled), new RegExp(PRIVATE));
 });
 

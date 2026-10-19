@@ -5,11 +5,17 @@ import { dirname, isAbsolute, join } from "node:path";
 import { getAgentDir, type ExtensionAPI, type ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { OutputTokenRate } from "../resource-status/core.ts";
 import { OPENAI_USAGE_CHANGED_EVENT, SUBAGENTS_CHANGED_EVENT, TODOS_CHANGED_EVENT } from "../resource-status/protocol.ts";
-import { LIVE_HUD_MAX_BYTES, LIVE_HUD_MAX_EVENTS, LIVE_HUD_VERSION, TALK_CAPTIONS_EVENT, TALK_VISUAL_EVENT, captionCallActive, type LiveCaptions, type LiveHudEvent, type LiveHudSnapshot } from "./webcam/src/shared/live-protocol.ts";
+import { LIVE_HUD_MAX_BYTES, LIVE_HUD_MAX_EVENTS, LIVE_HUD_STALE_MS, LIVE_HUD_VERSION, TALK_CAPTIONS_EVENT, TALK_VISUAL_EVENT, captionCallActive, type LiveCaptions, type LiveHudEvent, type LiveHudSnapshot } from "./webcam/src/shared/live-protocol.ts";
 import { activityTimestamp, activityToolName, createAgentCompletionRetention, emptyProjection, initialActivity, initialTodos, nonnegative, projectAgents, projectContext, projectTalk, projectTodos, projectUsage } from "./webcam-projection.ts";
 import { createWebcamTranscript } from "./webcam-transcript.ts";
-import { parseLiveCaptions } from "./webcam/src/shared/live-validation.ts";
+import { parseLiveCaptions, parseLiveHudSnapshot } from "./webcam/src/shared/live-validation.ts";
+import { createLiveHudMultisession, LIVE_HUD_MULTI_MAX_BYTES, type LiveHudMultisession, type WebcamMultisession } from "./webcam/src/shared/multisession-protocol.ts";
 import { parsePresentation, type Presentation, type DisplayAuthority } from "./webcam/src/shared/presentation-protocol.ts";
+
+/** Public integration contract for Talk's main/receiver IPC coordinator. */
+export type LiveSnapshot = LiveHudSnapshot;
+export type { WebcamMultisession } from "./webcam/src/shared/multisession-protocol.ts";
+export type WebcamSnapshotListener = (snapshot: LiveSnapshot | null) => void;
 
 export interface WebcamPresentationHost {
   current(): { sessionKey: string; runId: string } | undefined;
@@ -21,6 +27,15 @@ export interface WebcamBridge {
   /** Explicit consent: expose visible conversation, compact tool previews, task labels/text and todos. */
   start(ctx: ExtensionContext): Promise<void>;
   stop(): Promise<void>;
+  /** Explicit receiver opt-in: collect the SAME redacted projection, never a socket/app.
+   * Forward replacements over opted-in IPC only. null revokes the previous snapshot.
+   * The returned idempotent disposer ends this subscription, not a main publisher.
+   * One subscriber per bridge; a new subscription revokes the old one. */
+  startProjection?(ctx: ExtensionContext, onSnapshot: WebcamSnapshotListener): Promise<() => void>;
+  /** Main publisher only. Full replacement of all explicitly opted-in connected sessions.
+   * Invalid input fails closed. undefined restores legacy single-session frames.
+   * This API neither opts in nor creates any runtime resources. */
+  setMultisession?(value: WebcamMultisession | undefined): void;
   status(): string;
   updateContext(ctx: ExtensionContext): void;
   /** Optional only for legacy injected bridges; missing APIs deny presentation. */
@@ -138,16 +153,33 @@ export function registerWebcamBridge(pi: ExtensionAPI, options: WebcamBridgeOpti
   let server: Server | undefined;
   let timer: Timer | undefined;
   let ready = false;
+  let subscriber: WebcamSnapshotListener | undefined;
+  let multisessionEnabled = false;
+  let multisession: LiveHudMultisession | undefined;
+  let ticking = false;
   let publishedPath: string | undefined;
   let stagingPath: string | undefined;
   let owned: Stats | undefined;
   const clients = new Set<Socket>();
   let transition = Promise.resolve();
 
-  function serialized(operation: () => Promise<void>): Promise<void> {
+  function serialized<T>(operation: () => Promise<T>): Promise<T> {
     const result = transition.then(operation);
-    transition = result.catch(() => {});
+    transition = result.then(() => {}, () => {});
     return result;
+  }
+  function notify(value: LiveSnapshot | null): void {
+    try { subscriber?.(value); } catch { /* A receiver cannot break lifecycle/cleanup. */ }
+  }
+  function revokeProjection(): void {
+    const previous = subscriber;
+    subscriber = undefined; // Fence reentrant disposal before notifying the consumer.
+    try { previous?.(null); } catch { /* Consumer cleanup cannot retain collection. */ }
+  }
+  function ensureTimer(): void {
+    if (timer) return;
+    timer = schedule(tick, HEARTBEAT_MS);
+    timer.unref?.();
   }
   function clearSession(): void {
     resetPresentation();
@@ -162,6 +194,7 @@ export function registerWebcamBridge(pi: ExtensionAPI, options: WebcamBridgeOpti
     agentCompletions.reset(now());
     todosKnown = false;
     rate.reset();
+    notify(null);
   }
   function updateContext(next: ExtensionContext): void {
     let source: string;
@@ -223,12 +256,53 @@ export function registerWebcamBridge(pi: ExtensionAPI, options: WebcamBridgeOpti
   }
   function frame(): string | undefined {
     if (!ctx || !sessionId) return undefined;
-    const value = JSON.stringify(snapshot()) + "\n";
-    return Buffer.byteLength(value) <= LIVE_HUD_MAX_BYTES ? value : undefined;
+    const local = snapshot();
+    let data: LiveHudSnapshot | LiveHudMultisession = local;
+    if (multisessionEnabled) {
+      if (!multisession) return undefined;
+      const timestamp = activityTimestamp(now()) ?? local.timestamp;
+      const envelope = createLiveHudMultisession({ mainSessionId: multisession.mainSessionId, activeSessionId: multisession.activeSessionId, sessions: multisession.sessions.map(({ isActive: _active, ...row }) => {
+        const current = row.isMain && row.sessionId === sourceSession ? (presentationSuspended ? null : local) : row.snapshot;
+        // IPC loss must not leave a retained conversation live indefinitely.
+        const fresh = current && timestamp - current.timestamp < LIVE_HUD_STALE_MS && current.timestamp - timestamp <= 1000;
+        return { ...row, snapshot: fresh ? current : null };
+      }) }, { streamId, sequence: local.sequence, timestamp });
+      if (!envelope) return undefined;
+      data = envelope;
+    }
+    const value = JSON.stringify(data) + "\n";
+    return Buffer.byteLength(value) <= (multisessionEnabled ? LIVE_HUD_MULTI_MAX_BYTES : LIVE_HUD_MAX_BYTES) ? value : undefined;
+  }
+  function setMultisession(value: WebcamMultisession | undefined): void {
+    const enabled = value !== undefined;
+    if (enabled !== multisessionEnabled && (ready || subscriber)) {
+      // A wire-mode change creates a new publisher generation rather than
+      // resurrecting a retired v1/v2 generation in the client's replay fence.
+      streamId = identity(); sequence = 0;
+    }
+    multisessionEnabled = enabled;
+    multisession = value === undefined ? undefined : createLiveHudMultisession(value, {
+      streamId: streamId || "pending", sequence: 0, timestamp: activityTimestamp(now()) ?? 0,
+    }) ?? undefined;
+    // A collector callback may synchronously feed the main coordinator. Batch that
+    // replacement into the outer heartbeat, without recursion or a second write.
+    if (!ticking) publishClients(); // Revocation/active changes otherwise reach clients immediately.
+    if (multisessionEnabled && !multisession) throw new Error("Invalid webcam multisession state");
   }
   function tick(): void {
-    // Expire completion payloads even with no connected HUD; no extra timer.
-    projection.agents = agentCompletions.snapshot(now());
+    if (ticking) return;
+    ticking = true;
+    try {
+      // Expire completion payloads even with no connected HUD; no extra timer.
+      projection.agents = agentCompletions.snapshot(now());
+      if (subscriber) {
+        try { notify(accepting && ctx && !presentationSuspended ? parseLiveHudSnapshot(snapshot()) : null); }
+        catch { notify(null); }
+      }
+      publishClients();
+    } finally { ticking = false; }
+  }
+  function publishClients(): void {
     if (!ready || clients.size === 0) return;
     try {
       const value = frame();
@@ -259,13 +333,13 @@ export function registerWebcamBridge(pi: ExtensionAPI, options: WebcamBridgeOpti
     projection.talk = value;
   }));
   pi.events.on(TALK_CAPTIONS_EVENT, payload => {
-    if (!accepting || !ready) return; // Sharing opt-in is unchanged; never cache while off.
+    if (!accepting || (!ready && !subscriber)) return; // Never cache while sharing is off.
     const value = parseLiveCaptions(payload, projection.talk, now());
     if (value) captions = value;
   });
 
   pi.on("session_start", async (_event, next) => { presentationSuspended = false; updateContext(next); transcript.reset(next); });
-  const suspendPresentation = () => { presentationSuspended = true; resetPresentation(); };
+  const suspendPresentation = () => { presentationSuspended = true; resetPresentation(); notify(null); tick(); };
   pi.on("session_before_tree", suspendPresentation);
   pi.on("session_before_switch", suspendPresentation);
   pi.on("session_tree", async (_event, next) => {
@@ -320,13 +394,14 @@ export function registerWebcamBridge(pi: ExtensionAPI, options: WebcamBridgeOpti
   pi.on("tool_execution_start", async (event, next) => {
     if (!accepting) return;
     updateContext(next); phase = "running";
-    if (transcript.reconcile(next)) transcript.toolStart(event.toolCallId, event.parentToolCallId);
-    if (!event.parentToolCallId) addActivity({ role: "toolResult", kind: "tool", status: "started" }, event.toolName);
+    const parentToolCallId = (event as { parentToolCallId?: string }).parentToolCallId;
+    if (transcript.reconcile(next)) transcript.toolStart(event.toolCallId, parentToolCallId);
+    if (!parentToolCallId) addActivity({ role: "toolResult", kind: "tool", status: "started" }, event.toolName);
   });
   pi.on("tool_execution_end", async (event, next) => {
     if (!accepting) return;
     updateContext(next);
-    if (!event.parentToolCallId) addActivity({ role: "toolResult", kind: "tool", status: event.isError ? "failed" : "completed" }, event.toolName);
+    if (!(event as { parentToolCallId?: string }).parentToolCallId) addActivity({ role: "toolResult", kind: "tool", status: event.isError ? "failed" : "completed" }, event.toolName);
   });
   pi.on("session_before_compact", async (_event, next) => {
     if (!accepting) return;
@@ -350,14 +425,14 @@ export function registerWebcamBridge(pi: ExtensionAPI, options: WebcamBridgeOpti
   pi.on("agent_settled", async (event, next) => {
     if (!accepting) return;
     updateContext(next); transcript.reconcile(next, true); phase = "idle";
-    addActivity({ role: "system", kind: "run", status: event.aborted ? "aborted" : "settled" });
+    addActivity({ role: "system", kind: "run", status: (event as { aborted?: boolean } | undefined)?.aborted ? "aborted" : "settled" });
   });
 
   async function dispose(): Promise<void> {
     resetPresentation();
     ready = false;
     presentationHost?.sync();
-    if (timer) { cancel(timer); timer = undefined; }
+    if (timer && !subscriber) { cancel(timer); timer = undefined; }
     for (const client of clients) client.destroy();
     clients.clear();
     // Node/libuv unconditionally unlinks its listen pathname on close. Bind a
@@ -374,11 +449,18 @@ export function registerWebcamBridge(pi: ExtensionAPI, options: WebcamBridgeOpti
     owned = undefined;
   }
   function stop(): Promise<void> {
+    ready = false;
+    revokeProjection();
+    multisessionEnabled = false;
+    multisession = undefined;
     transcript.stop();
     accepting = false;
     clearSession();
     ready = false;
     return serialized(async () => {
+      revokeProjection();
+      multisessionEnabled = false;
+      multisession = undefined;
       transcript.stop();
       accepting = false;
       clearSession();
@@ -422,9 +504,9 @@ export function registerWebcamBridge(pi: ExtensionAPI, options: WebcamBridgeOpti
         });
         // Keep an error listener even after listen settles and during teardown.
         local.on("error", () => {
-          transcript.stop();
+          if (!subscriber) transcript.stop();
           resetPresentation();
-          if (ready) { state = "error"; ready = false; presentationHost?.sync(); void serialized(dispose); }
+          if (ready) { state = subscriber ? "projecting" : "error"; ready = false; presentationHost?.sync(); void serialized(dispose); }
         });
         await new Promise<void>((resolve, reject) => {
           const failed = (error: Error) => { local.off("listening", listening); reject(error); };
@@ -453,17 +535,55 @@ export function registerWebcamBridge(pi: ExtensionAPI, options: WebcamBridgeOpti
         state = "live";
         presentationHost?.sync();
         local.unref();
-        timer = schedule(tick, HEARTBEAT_MS);
-        timer.unref?.();
+        ensureTimer();
       } catch (error) {
-        transcript.stop();
+        if (!subscriber) transcript.stop();
         await dispose();
-        state = "error";
+        state = subscriber ? "projecting" : "error";
         throw safeError((error as NodeJS.ErrnoException).code === "EADDRINUSE");
       }
     });
   }
-  return { start, stop, status: () => state, updateContext,
+  function startProjection(next: ExtensionContext, onSnapshot: WebcamSnapshotListener): Promise<() => void> {
+    return serialized(async () => {
+      const wasCollecting = ready || !!subscriber;
+      revokeProjection();
+      const token: WebcamSnapshotListener = value => onSnapshot(value);
+      subscriber = token;
+      try {
+        updateContext(next);
+        presentationSuspended = false;
+        if (!wasCollecting) {
+          streamId = identity(); sequence = 0;
+          transcript.start(next);
+        }
+        ensureTimer();
+        if (!ready) state = "projecting";
+        tick();
+      } catch (error) {
+        subscriber = undefined;
+        try { token(null); } catch { /* Consumer cleanup. */ }
+        if (!ready) {
+          transcript.stop(); accepting = false; clearSession();
+          if (timer) { cancel(timer); timer = undefined; }
+          state = "stopped";
+          multisessionEnabled = false; multisession = undefined;
+        }
+        throw error;
+      }
+      return () => {
+        if (subscriber !== token) return;
+        revokeProjection();
+        if (!ready) {
+          transcript.stop(); accepting = false; clearSession();
+          if (timer) { cancel(timer); timer = undefined; }
+          state = "stopped";
+          multisessionEnabled = false; multisession = undefined;
+        }
+      };
+    });
+  }
+  return { start, stop, startProjection, setMultisession, status: () => state, updateContext,
     presentationReady: () => ready && accepting && !!ctx,
     presentationAuthority,
     presentationSocketPath: () => socketPath,

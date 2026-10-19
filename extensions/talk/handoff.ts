@@ -1,3 +1,12 @@
+/** Retired questionnaire controls are data, never new work (including escaped JSON keys). */
+export function isReservedTalkQuestionControl(input: string): boolean {
+  try {
+    const value: unknown = JSON.parse(input);
+    return value !== null && typeof value === "object"
+      && (Object.hasOwn(value, "talk_answer") || Object.hasOwn(value, "talk_task_answer"));
+  } catch { return false; }
+}
+
 /** True when a delegated task is only an acknowledgment or deictic command. */
 export function isVagueTalkTask(input: string): boolean {
   if (typeof input !== "string" || input.length > 8 * 1024) return false;

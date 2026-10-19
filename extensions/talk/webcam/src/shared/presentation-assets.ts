@@ -6,7 +6,7 @@ import { PRESENTATION_MAX_IMAGE_BYTES, parsePresentationImage, presentationDimen
 
 const same = (a: Stats, b: Stats) => a.dev === b.dev && a.ino === b.ino;
 export class PresentationAssetError extends Error {}
-const bad = (message: string): never => { throw new PresentationAssetError(message); };
+function bad(message: string): never { throw new PresentationAssetError(message); }
 const uid = () => process.getuid?.() ?? bad('Presentations require a same-user local filesystem');
 function absolute(path: string): string {
   if (typeof path !== 'string' || !isAbsolute(path) || path.length > 4096 || /[\u0000-\u001f\u007f]/u.test(path)

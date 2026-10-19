@@ -340,7 +340,7 @@ export function createTalkBridge(
     },
     // Optional lifecycle wake for the idle-preflight admission barrier only.
     agentStart: wake,
-    toolStart(event: ToolExecutionStartEvent) {
+    toolStart(event: ToolExecutionStartEvent & { parentToolCallId?: string }) {
       if (closed || event.toolName !== "subagent" || !current || current.superseded || foreignBatch) return;
       if (correlationBlocked) { current.superseded = current.quarantined = true; return; }
       if (++operationCount > 256 || event.toolCallId.length > 1024 || toolScopes.has(event.toolCallId)) {
@@ -349,7 +349,7 @@ export function createTalkBridge(
       }
       toolScopes.set(event.toolCallId, current);
     },
-    toolEnd(event: ToolExecutionEndEvent) {
+    toolEnd(event: ToolExecutionEndEvent & { parentToolCallId?: string }) {
       if (closed || event.toolName !== "subagent") return;
       const scope = toolScopes.get(event.toolCallId);
       toolScopes.delete(event.toolCallId);

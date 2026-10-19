@@ -8,7 +8,7 @@ import { LIVE_HUD_MAX_TRANSCRIPT_BLOCKS, LIVE_HUD_MAX_TRANSCRIPT_BYTES, LIVE_HUD
 type Renderers = Pick<ToolDefinition, "renderShell" | "renderCall" | "renderResult">;
 type Resolver = (name: string, next: () => Renderers | undefined) => Renderers | undefined;
 type Entry = { id: string; parentId: string | null; type: string; [key: string]: unknown };
-const text = (value: string) => ({ type: "text", text: value });
+const text = (value: string) => ({ type: "text" as const, text: value });
 const assistant = (value: string, timestamp = 1) => ({ role: "assistant", timestamp, content: [text(value)] });
 const messageEntry = (id: string, message: unknown, parentId: string | null = null): Entry => ({ id, parentId, type: "message", message });
 function harness(initial: Entry[] = []) {

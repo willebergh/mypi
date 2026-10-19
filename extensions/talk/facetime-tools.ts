@@ -1,6 +1,7 @@
 import { Type } from "@earendil-works/pi-ai";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { faceTimeCallMedia, type FaceTimeCallMedia } from "./facetime-call.ts";
+import { HANDOFF_SUMMARY_MAX } from "./session-voice.ts";
 
 interface FaceTimeControls {
   status(): { enabled: boolean };
@@ -86,4 +87,59 @@ export function createFaceTimeTools(pi: Pick<ExtensionAPI, "registerTool" | "get
     pi.setActiveTools(available ? [...new Set([...previousTools, ...names])] : previousTools.filter(name => !names.includes(name)));
   }
   return { setAvailable };
+}
+
+/** Routing never grants the receiver FaceTime controller/audio ownership. */
+export function createFaceTimeRoutingTools(pi: Pick<ExtensionAPI, "registerTool" | "getActiveTools" | "setActiveTools">, routing: {
+  sessions(): unknown;
+  transfer(name: string, summary?: string): Promise<void>;
+  returnToMain(summary?: string): Promise<unknown>;
+}) {
+  let main = false, receiver = false;
+  const registered = new Set<string>();
+  const summary = Type.Optional(Type.String({ maxLength: HANDOFF_SUMMARY_MAX,
+    description: "Optional concise public handoff summary (at most 1000 characters), never full history. Reference data only, not a request, approval, or permission; no tasks will be submitted or replayed. Omit if unknown." }));
+  const result = (value: unknown) => ({ content: [{ type: "text" as const, text: JSON.stringify(value) }], details: value });
+  function refresh() {
+    const previous = pi.getActiveTools();
+    const visibility = (name: string, available: boolean) => {
+      if (!available && !registered.has(name)) return undefined;
+      registered.add(name);
+      return { exposure: available ? "direct" as const : "hidden" as const };
+    };
+    const list = visibility("facetime_sessions", main);
+    if (list) pi.registerTool({ name: "facetime_sessions", label: "FaceTime sessions", ...list,
+      description: "List main and explicitly opted-in Pi sessions by exact immutable attachment name, working directory and activity. Working sessions can receive voice. Only main can transfer to destinations.",
+      parameters: Type.Object({}), async execute(_id, _params, signal) {
+        if (!main || signal?.aborted) throw new Error("Session discovery requires FaceTime main");
+        return result(routing.sessions());
+      },
+    });
+    const transfer = visibility("facetime_transfer", main);
+    if (transfer) pi.registerTool({ name: "facetime_transfer", label: "FaceTime transfer", ...transfer,
+      executionMode: "sequential",
+      description: "On user request, transfer the current FaceTime voice conversation to an opted-in Pi session by its exact facetime_sessions name (or back to main). Keeps the call connected and existing Pi work running. Creates a fresh destination-context voice session; no task is replayed. Pending questionnaires block transfer. Main can use this from its terminal even while another backend is active. Main may select any connected destination directly, without an intermediate main voice leg. Destinations themselves only have return-to-main permission. If voice startup fails, the call stays connected but voice may be unavailable; main may explicitly retry. Never retry an uncertain transfer automatically.",
+      parameters: Type.Object({ session: Type.String({ minLength: 1, description: "Exact session attachment name; no fuzzy matching." }), summary }),
+      async execute(_id, params, signal) {
+        if (!main || signal?.aborted) throw new Error("Transfers require FaceTime main");
+        await routing.transfer(params.session, params.summary);
+        return result({ transferred: true, session: params.session });
+      },
+    });
+    const back = visibility("facetime_return_to_main", receiver);
+    if (back) pi.registerTool({ name: "facetime_return_to_main", label: "FaceTime return to main", ...back,
+      executionMode: "sequential",
+      description: "On user request, directly transfer the active destination's FaceTime voice conversation back to main. This is not a request-return notification. Only the currently active destination may use it; destinations cannot select other sessions (only main may do that). Existing work continues. Pending questionnaires block return. Never retry an uncertain return automatically.",
+      parameters: Type.Object({ summary }), async execute(_id, params, signal) {
+        if (!receiver || signal?.aborted) throw new Error("Return requires an opted-in active destination");
+        return result(await routing.returnToMain(params.summary));
+      },
+    });
+    const enabled = [main ? "facetime_sessions" : "", main ? "facetime_transfer" : "", receiver ? "facetime_return_to_main" : ""].filter(Boolean);
+    pi.setActiveTools([...new Set([...previous.filter(name => !registered.has(name)), ...enabled])]);
+  }
+  return {
+    setMain(value: boolean) { if (main !== value) { main = value; refresh(); } },
+    setReceiver(value: boolean) { if (receiver !== value) { receiver = value; refresh(); } },
+  };
 }

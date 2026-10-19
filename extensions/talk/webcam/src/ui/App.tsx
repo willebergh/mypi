@@ -10,6 +10,7 @@ import OutputMonitor from './OutputMonitor';
 import OutputViewControls from './OutputViewControls';
 import InspectorSections from './InspectorSections';
 import WorkspaceToolbar from './WorkspaceToolbar';
+import SessionList from './SessionList';
 import { acquireLiveHudFeed } from '../shared/live-feed';
 import { OFFLINE_LIVE_HUD } from '../shared/live-projection';
 
@@ -108,6 +109,7 @@ export default function App({ initial }: { initial: EditorBootstrap }) {
         <InspectorSections section={editorPreferences.inspectorSection} onSectionChange={inspectorSection => updateEditorPreferences({ inspectorSection })} config={config} state={state} change={change} edit={edit} liveHud={liveHud} onModeChange={mode => { void action(() => window.webcam.setLiveHudMode(mode)); }} />
         <div className="operational-status" aria-label="Feed and speech health">
           <div className="feed-status" role="status"><span>Pi feed</span><strong className={liveHud.mode === 'live' && liveHud.connection === 'live' ? 'is-live' : ''}>{liveHud.mode === 'demo' ? 'Demo · authored data' : liveHud.connection === 'live' ? 'Live · read only' : liveHud.connection}</strong></div>
+          <SessionList state={liveHud} />
           {/* Always mounted: speech owns race guards and a bounded diagnostic lifecycle. */}
           <SpeechAudio />
         </div>

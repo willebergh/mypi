@@ -128,6 +128,8 @@ export interface LiveHudState {
   /** Generic diagnostics only, never raw errors or private filesystem paths. */
   detail?: string;
   snapshot: LiveHudSnapshot | null;
+  /** All opted-in conversations; snapshot above remains only the active conversation. */
+  multisession?: import('./multisession-protocol.ts').LiveHudMultisession;
   /** Main-authored fixtures, never accepted by the Pi live protocol. Absent on older main. */
   demo?: DemoHudState;
 }

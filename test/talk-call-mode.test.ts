@@ -1,5 +1,8 @@
 import assert from "node:assert/strict";
 import test, { type TestContext } from "node:test";
+import { mkdtempSync, realpathSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { registerTalk } from "../extensions/talk/index.ts";
 import type { FaceTimeModeOptions, FaceTimeVoiceHandle } from "../extensions/talk/facetime-mode.ts";
@@ -66,7 +69,9 @@ function setup(t: TestContext, overrides: Partial<Dependencies> = {}) {
     async stopSharing() { sharingCalls.push({ action: "stop" }); return { active: false, verified: true }; },
     async voiceEnded() { voiceEnded++; state.phase = "standby"; },
   };
+  const directory = mkdtempSync(join(realpathSync(tmpdir()), "tm-"));
   const dependencies: Dependencies = {
+    sessionSocketPath: join(directory, "hub.sock"),
     audioMode: "native", summarizeContext: async () => undefined,
     createWebcamBridge: () => ({
       start: async () => { webcamCalls.push("hud:start"); webcamLive = true; },
@@ -92,9 +97,13 @@ function setup(t: TestContext, overrides: Partial<Dependencies> = {}) {
   };
   registerTalk(pi, dependencies);
   const run = (args: string) => command(args, ctx);
-  t.after(async () => { await run("stop"); await handlers.get("session_shutdown")?.({}, ctx); });
+  t.after(async () => {
+    try { await run("stop"); await handlers.get("session_shutdown")?.({}, ctx); }
+    finally { rmSync(directory, { recursive: true, force: true }); }
+  });
   return {
     run, definitions, notices, opened, gates, history, sent, statuses, dependencies, profiles, mode, quiet, spoken, sharingCalls,
+    get faceTimeDefinitions() { return [...definitions.values()].filter(tool => tool.name.startsWith("facetime_")); },
     get modeOptions() { return modeOptions; }, get modeCreates() { return modeCreates; }, get disabled() { return disabled; },
     get voiceEnded() { return voiceEnded; }, get peerCloses() { return peerCloses; }, get callbacks() { return callbacks; },
     get activeTools() { return activeTools; }, events, emitted, messages, webcamCalls,
@@ -119,7 +128,7 @@ test("regular Talk uses physical audio and cannot enable FaceTime tools or stand
   assert.equal(h.opened[0][6], true);
   await h.run("facetime");
   assert.equal(h.modeCreates, 0);
-  assert.equal(h.definitions.size, 0);
+  assert.equal(h.faceTimeDefinitions.length, 0);
   assert.match(h.notices.at(-1)!, /Stop the current Talk mode/);
 });
 
@@ -137,7 +146,7 @@ test("standby exposes tools without a voice call; virtual call stays gated until
   const h = setup(t);
   await h.run("facetime");
   assert.equal(h.opened.length, 0);
-  assert.equal(h.definitions.size, 6);
+  assert.equal(h.faceTimeDefinitions.length, 8);
   assert.deepEqual(h.modeOptions.routing, { input: "Pi Talk", output: "Pi Talk" });
   assert.deepEqual(h.dashboard, { state: "idle", mode: "facetime", detail: "standby" });
   assert.equal(h.statuses.get("talk-facetime"), undefined, "no separate FaceTime footer status");
@@ -258,7 +267,7 @@ test("stopping or switching Pi sessions disables mode and hides every FaceTime t
   assert.equal(h.disabled, 1);
   assert.equal(h.peerCloses, 1);
   assert.deepEqual(h.activeTools, ["read", "bash"]);
-  assert.ok([...h.definitions.values()].every(value => value.exposure === "hidden"));
+  assert.ok(h.faceTimeDefinitions.every(value => value.exposure === "hidden"));
   assert.equal(h.statuses.get("talk-facetime"), undefined);
   await h.run("start");
   assert.equal(h.opened[1][6], true);
@@ -388,6 +397,6 @@ test("invalid virtual settings fail without exposing tools or opening audio", as
   await h.run("facetime");
   assert.equal(h.modeCreates, 0);
   assert.equal(h.opened.length, 0);
-  assert.equal(h.definitions.size, 0);
+  assert.equal(h.faceTimeDefinitions.length, 0);
   assert.match(h.notices.at(-1)!, /managed Pi Talk visibleUid and internalUid/);
 });

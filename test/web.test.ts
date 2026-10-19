@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
+import { fileURLToPath } from "node:url";
 import {
   loadPackageEnv,
   PACKAGE_ENV_PATH,
@@ -35,7 +36,7 @@ test("loads the package-scoped env file", () => {
     true,
   );
   assert.equal(loadedPath, PACKAGE_ENV_PATH);
-  assert.match(PACKAGE_ENV_PATH, /mypi\/.env$/);
+  assert.equal(PACKAGE_ENV_PATH, fileURLToPath(new URL("../.env", import.meta.url)));
 });
 
 test("allows the package-scoped env file to be absent", () => {

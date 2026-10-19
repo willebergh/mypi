@@ -3,6 +3,7 @@ import { homedir } from 'node:os';
 import path from 'node:path';
 import { LIVE_HUD_MAX_BYTES, LIVE_HUD_STALE_MS, type LiveHudState } from '../shared/live-protocol.ts';
 import { parseLiveHudSnapshot } from '../shared/live-validation.ts';
+import { activeLiveHudSnapshot, LIVE_HUD_MULTI_MAX_BYTES, parseLiveHudMultisession, type LiveHudMultisession } from '../shared/multisession-protocol.ts';
 
 export function liveHudSocketPath(env: NodeJS.ProcessEnv = process.env): string {
   const expand = (value: string) => value === '~' ? homedir() : value.startsWith('~/') ? path.join(homedir(), value.slice(2)) : value;
@@ -42,10 +43,14 @@ export function createLiveHudClient(options: LiveHudClientOptions) {
   // Retain sequence fences across reconnects, with bounded generation history.
   const watermarks = new Map<string, number>();
   let currentKey: string | null = null;
-  const publish = (connection: LiveHudState['connection'], snapshot: LiveHudState['snapshot'] = null) => {
-    state = { mode: 'live', connection, snapshot };
+  const publish = (connection: LiveHudState['connection'], snapshot: LiveHudState['snapshot'] = null, multisession?: LiveHudMultisession) => {
+    state = { mode: 'live', connection, snapshot, ...(multisession ? { multisession } : {}) };
     try { options.onState(state); } catch { /* Consumer cannot break cleanup/reconnect. */ }
   };
+  function freshSessions(value: LiveHudMultisession): LiveHudMultisession {
+    return { ...value, sessions: value.sessions.map(row => ({ ...row, snapshot: row.snapshot
+      && now() - row.snapshot.timestamp < LIVE_HUD_STALE_MS && row.snapshot.timestamp - now() <= 1000 ? row.snapshot : null })) };
+  }
   function connect() {
     if (closed) return;
     const token = ++generation;
@@ -72,7 +77,14 @@ export function createLiveHudClient(options: LiveHudClientOptions) {
     };
     heartbeat = setInterval(() => {
       if (now() - lastAccepted >= LIVE_HUD_STALE_MS
-        || (state.snapshot && now() - state.snapshot.timestamp >= LIVE_HUD_STALE_MS)) fail('stale');
+        || (!state.multisession && state.snapshot && now() - state.snapshot.timestamp >= LIVE_HUD_STALE_MS)) { fail('stale'); return; }
+      // Expire each conversation independently, even if the owner is still live.
+      if (state.multisession) {
+        const next = freshSessions(state.multisession);
+        if (next.sessions.some((row, index) => row.snapshot !== state.multisession!.sessions[index]!.snapshot)) {
+          publish('live', activeLiveHudSnapshot(next, now()), next);
+        }
+      }
     }, heartbeatMs);
     heartbeat.unref();
     peer.on('error', () => fail('offline'));
@@ -85,29 +97,35 @@ export function createLiveHudClient(options: LiveHudClientOptions) {
       while (offset < chunk.length && !ended && !closed && token === generation) {
         const newline = chunk.indexOf(10, offset);
         const end = newline < 0 ? chunk.length : newline;
-        if (buffer.length + end - offset > LIVE_HUD_MAX_BYTES) { fail('error'); return; }
+        if (buffer.length + end - offset > LIVE_HUD_MULTI_MAX_BYTES) { fail('error'); return; }
         buffer = Buffer.concat([buffer, chunk.subarray(offset, end)]);
         offset = end + 1;
         if (newline < 0) return;
         let value: unknown;
         try { value = JSON.parse(new TextDecoder('utf-8', { fatal: true }).decode(buffer)); }
         catch { fail('error'); return; }
+        const frameBytes = buffer.length;
         buffer = Buffer.alloc(0);
-        const snapshot = parseLiveHudSnapshot(value);
-        if (!snapshot) { fail('error'); return; }
-        const key = JSON.stringify([snapshot.streamId, snapshot.sessionId]);
+        const multi = parseLiveHudMultisession(value);
+        if (!multi && frameBytes > LIVE_HUD_MAX_BYTES) { fail('error'); return; }
+        const snapshot = multi ? null : parseLiveHudSnapshot(value);
+        const clock = multi ?? snapshot;
+        if (!clock) { fail('error'); return; }
+        const key = multi ? JSON.stringify(['multi', multi.streamId])
+          : JSON.stringify([snapshot!.streamId, snapshot!.sessionId]);
         const watermark = watermarks.get(key);
         // A retired generation may not resurrect, even with a higher sequence.
-        if ((watermark !== undefined && key !== currentKey) || (watermark !== undefined && snapshot.sequence <= watermark)) continue;
-        if (now() - snapshot.timestamp >= LIVE_HUD_STALE_MS) { fail('stale'); return; }
-        if (snapshot.timestamp - now() > 1000) { fail('error'); return; }
+        if ((watermark !== undefined && key !== currentKey) || (watermark !== undefined && clock.sequence <= watermark)) continue;
+        if (now() - clock.timestamp >= LIVE_HUD_STALE_MS) { fail('stale'); return; }
+        if (clock.timestamp - now() > 1000) { fail('error'); return; }
         // Fail closed rather than evicting a fence and allowing an old generation to replay.
         if (!watermarks.has(key) && watermarks.size >= 128) { fail('error'); return; }
-        watermarks.set(key, snapshot.sequence);
+        watermarks.set(key, clock.sequence);
         currentKey = key;
         lastAccepted = now();
         backoff = minMs;
-        publish('live', snapshot);
+        if (multi) { const next = freshSessions(multi); publish('live', activeLiveHudSnapshot(next, now()), next); }
+        else publish('live', snapshot);
       }
     });
   }
