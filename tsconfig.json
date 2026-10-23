@@ -9,6 +9,5 @@
     "types": ["node"],
     "skipLibCheck": true
   },
-  "include": ["extensions/**/*.ts", "test/**/*.ts"],
-  "exclude": ["extensions/talk/webcam"]
+  "include": ["extensions/**/*.ts", "test/**/*.ts"]
 }

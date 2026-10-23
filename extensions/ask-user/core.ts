@@ -27,8 +27,6 @@ export interface AskUserResult {
   questions: UserQuestion[];
   answers: QuestionAnswer[];
   cancelled: boolean;
-  /** New final spoken intent, returned to the waiting agent through the tool result only. */
-  userRequest?: string;
 }
 
 export interface RawQuestion {
@@ -76,17 +74,6 @@ export function normalizeQuestions(rawQuestions: RawQuestion[]): UserQuestion[] 
 }
 
 export function formatAskUserResult(result: AskUserResult): string {
-  if (result.userRequest !== undefined) {
-    const confirmed = result.answers.filter((answer) => answer.skipped || answer.answers.length > 0);
-    const answers = formatAskUserResult({ ...result, answers: confirmed, cancelled: false, userRequest: undefined });
-    return [
-      answers ? `Confirmed answers:\n${answers}` : "No confirmed answers.",
-      result.cancelled
-        ? "Incomplete questionnaire interrupted; remaining questions are unanswered. No approval inferred for unanswered questions."
-        : "Questionnaire completed; no approval beyond the confirmed answers is inferred.",
-      `New spoken user request: ${result.userRequest}`,
-    ].join("\n");
-  }
   if (result.cancelled) return "User cancelled the questionnaire";
 
   return result.answers

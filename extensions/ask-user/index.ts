@@ -20,8 +20,6 @@ import {
   type UserQuestion,
 } from "./core.ts";
 
-import { requestVoiceQuestions } from "./voice.ts";
-
 const OptionSchema = Type.Object({
   label: Type.String({ description: "Answer shown to the user" }),
   description: Type.Optional(
@@ -121,18 +119,10 @@ export default function askUserExtension(pi: ExtensionAPI) {
         };
       }
 
-      const voiceResult = await requestVoiceQuestions(pi.events, questions, signal);
-      if (voiceResult !== undefined || signal?.aborted) {
-        const result: AskUserResult = signal?.aborted
-          ? { questions, answers: [], cancelled: true }
-          : voiceResult!;
-        return {
-          content: [{ type: "text", text: formatAskUserResult(result) }],
-          details: result,
-        };
-      }
-
-      const result = await ctx.ui.custom<AskUserResult>(
+      let disposeInteraction = () => {};
+      let result: AskUserResult;
+      try {
+        result = await ctx.ui.custom<AskUserResult>(
         (tui, theme, _keybindings, done) => {
           let questionIndex = 0;
           let rowIndex = 0;
@@ -159,9 +149,14 @@ export default function askUserExtension(pi: ExtensionAPI) {
           let completed = false;
           let listening = false;
           const cleanup = () => {
-            if (!listening) return;
-            listening = false;
-            signal?.removeEventListener("abort", onAbort);
+            if (listening) {
+              listening = false;
+              signal?.removeEventListener("abort", onAbort);
+            }
+          };
+          disposeInteraction = () => {
+            completed = true;
+            cleanup();
           };
           const finish = (result: AskUserResult) => {
             if (completed) return;
@@ -471,10 +466,7 @@ export default function askUserExtension(pi: ExtensionAPI) {
 
           return {
             render,
-            dispose() {
-              completed = true;
-              cleanup();
-            },
+            dispose: disposeInteraction,
             invalidate() {
               cachedWidth = undefined;
               cachedLines = undefined;
@@ -482,7 +474,10 @@ export default function askUserExtension(pi: ExtensionAPI) {
             handleInput,
           };
         },
-      );
+        );
+      } finally {
+        disposeInteraction();
+      }
 
       return {
         content: [{ type: "text", text: formatAskUserResult(result) }],
@@ -505,9 +500,6 @@ export default function askUserExtension(pi: ExtensionAPI) {
     renderResult(result, _options, theme) {
       const details = result.details as AskUserResult | undefined;
       if (!details) return new Text("", 0, 0);
-      if (details.userRequest !== undefined) {
-        return new Text(formatAskUserResult(details), 0, 0);
-      }
       if (details.cancelled) {
         return new Text(theme.fg("warning", "Questionnaire cancelled"), 0, 0);
       }

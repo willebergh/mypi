@@ -5,9 +5,3 @@ node_modules/
 .DS_Store
 *.log
 tmp/
-/extensions/talk/native/target/
-/extensions/talk/native/bin/
-/extensions/talk/facetime/.build/
-/extensions/talk/facetime/.swiftpm/
-/extensions/talk/facetime/snapshots/
-/extensions/talk/facetime/*.ndjson

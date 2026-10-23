@@ -1,7 +1,8 @@
 import assert from "node:assert/strict";
 import { EventEmitter } from "node:events";
 import { PassThrough } from "node:stream";
-import test from "node:test";
+import test, { type TestContext } from "node:test";
+import { setKittyProtocolActive } from "@earendil-works/pi-tui";
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { registerDictation } from "../extensions/dictation/index.ts";
 import { startRecorder } from "../extensions/dictation/recorder.ts";
@@ -33,7 +34,14 @@ function context(overrides: Record<string, any> = {}) {
   } as unknown as ExtensionContext;
   return { ctx, ui };
 }
-function setup(deps: Record<string, any> = {}) {
+const timerContexts = new WeakSet<TestContext>();
+function setup(t: TestContext, deps: Record<string, any> = {}) {
+  if (!timerContexts.has(t)) {
+    t.mock.timers.enable({ apis: ["setTimeout"] });
+    timerContexts.add(t);
+    setKittyProtocolActive(true);
+    t.after(() => setKittyProtocolActive(false));
+  }
   const ext = extension();
   const calls = { pasted: [] as string[], status: [] as any[], notices: [] as any[], appended: [] as Buffer[], closed: 0, stopped: 0, headers: undefined as any, signal: undefined as any };
   let finish: () => Promise<string> = async () => "hello";
@@ -56,17 +64,32 @@ function setup(deps: Record<string, any> = {}) {
   c.ui.pasteToEditor = (text: string) => { calls.pasted.push(text); paste(text); };
   c.ui.setStatus = (...args: any[]) => calls.status.push(args);
   c.ui.notify = (...args: any[]) => calls.notices.push(args);
+  let input!: (data: string) => unknown;
+  (c.ctx.ui as any).onTerminalInput = (handler: typeof input) => { input = handler; return () => {}; };
   registerDictation(ext.pi, injected);
+  ext.events.get("session_start")!({}, c.ctx);
+  ext.emitted.length = 0; // Assertions below track activity after session initialization.
+  t.after(() => ext.events.get("session_shutdown")!());
+  let held = false;
   return {
+    async toggle() {
+      held = !held;
+      input(held ? "\x1b[32u" : "\x1b[32;1:3u");
+      if (held) t.mock.timers.tick(1_000);
+      // Keyboard callbacks intentionally launch asynchronous capture/finish work.
+      for (let i = 0; i < 12; i++) await Promise.resolve();
+    },
     ...ext, ...c, calls, transcriber, recorder, setFinish: (f: typeof finish) => { finish = f; },
     transcript: (text: string) => onTranscript?.(text),
     audio: (pcm: Buffer) => onAudio?.(pcm),
   };
 }
-const start = (h: ReturnType<typeof setup>) => h.commands.get("dictate").handler("", h.ctx);
+const start = (h: ReturnType<typeof setup>) => h.toggle();
+const cancel = (h: ReturnType<typeof setup>) => h.events.get("session_before_tree")!();
 
-test("dictation uses existing codex credentials regardless of selected provider and pastes without sending", async () => {
-  const h = setup();
+test("dictation uses existing codex credentials regardless of selected provider and pastes without sending", async (t) => {
+  const h = setup(t);
+  assert.equal(h.commands.size, 0);
   (h.ctx as any).model = { provider: "other" };
   (h.ctx as any).modelRegistry.getApiKeyForProvider = async (id: string) => { assert.equal(id, "openai-codex"); return "token"; };
   await start(h);
@@ -80,27 +103,27 @@ test("dictation uses existing codex credentials regardless of selected provider 
   assert.equal(h.calls.closed, 1);
 });
 
-test("cancel while authorization or setup is pending prevents recorder start", async () => {
+test("cancel while authorization or setup is pending prevents recorder start", async (t) => {
   for (const stage of ["auth", "setup"]) {
     let release!: (value: any) => void;
-    const h = setup(stage === "setup" ? { openTranscriber: () => new Promise((r) => { release = r; }) } : {});
+    const h = setup(t, stage === "setup" ? { openTranscriber: () => new Promise((r) => { release = r; }) } : {});
     if (stage === "auth") (h.ctx as any).modelRegistry.getApiKeyForProvider = () => new Promise((r) => { release = r; });
     const opening = start(h);
     await Promise.resolve();
-    await h.commands.get("dictate").handler("cancel", h.ctx);
+    await cancel(h);
     release(stage === "auth" ? "token" : { close() {} });
     await opening;
     assert.equal(h.calls.stopped, 0);
   }
 });
 
-test("/dictate cancel discards a live recording and shutdown during finish never pastes", async () => {
-  const h = setup();
+test("tree navigation discards a live recording and shutdown during finish never pastes", async (t) => {
+  const h = setup(t);
   await start(h);
-  await h.commands.get("dictate").handler("cancel", h.ctx);
+  await cancel(h);
   assert.deepEqual(h.calls.pasted, []);
   assert.equal(h.calls.stopped, 1);
-  const x = setup();
+  const x = setup(t);
   let resolve!: (s: string) => void;
   x.setFinish(() => new Promise((r) => { resolve = r; }));
   await start(x);
@@ -112,24 +135,24 @@ test("/dictate cancel discards a live recording and shutdown during finish never
   assert.deepEqual(x.calls.pasted, []);
 });
 
-test("empty token, empty transcript, and errors clean up safely", async () => {
-  const empty = setup();
+test("empty token, empty transcript, and errors clean up safely", async (t) => {
+  const empty = setup(t);
   (empty.ctx as any).modelRegistry.getApiKeyForProvider = async () => "";
   await start(empty);
   assert.equal(empty.calls.stopped, 0);
   assert.equal(empty.calls.notices[0][1], "error");
-  const blank = setup(); blank.setFinish(async () => "");
+  const blank = setup(t); blank.setFinish(async () => "");
   await start(blank); await start(blank);
   assert.deepEqual(blank.calls.pasted, []);
   let onError!: (e: Error) => void;
-  const broken = setup({ startRecorder: (_append: any, error: any) => { onError = error; return { stop: async () => {} }; } });
+  const broken = setup(t, { startRecorder: (_append: any, error: any) => { onError = error; return { stop: async () => {} }; } });
   await start(broken); onError(new Error("broken")); await Promise.resolve(); await Promise.resolve();
   assert.equal(broken.calls.closed, 1);
 });
 
-test("empty results distinguish missing capture from an empty model transcript", async () => {
+test("empty results distinguish missing capture from an empty model transcript", async (t) => {
   for (const size of [0, 12_000]) {
-    const h = setup();
+    const h = setup(t);
     h.setFinish(async () => "");
     await start(h);
     h.audio(Buffer.alloc(size));
@@ -138,8 +161,8 @@ test("empty results distinguish missing capture from an empty model transcript",
   }
 });
 
-test("terminal listener filters Shift even when a dialog owns input", async () => {
-  const h = setup();
+test("terminal listener filters Shift even when a dialog owns input", async (t) => {
+  const h = setup(t);
   let input!: (data: string) => unknown;
   (h.ctx.ui as any).onTerminalInput = (handler: typeof input) => { input = handler; return () => {}; };
   await h.events.get("session_start")!({}, h.ctx);
@@ -151,8 +174,8 @@ test("terminal listener filters Shift even when a dialog owns input", async () =
   await h.events.get("session_shutdown")!();
 });
 
-test("live text preserves the draft and final corrections never duplicate it", async () => {
-  const h = setup();
+test("live text preserves the draft and final corrections never duplicate it", async (t) => {
+  const h = setup(t);
   h.ui.setEditorText("Existing draft: ");
   await start(h);
   h.transcript("hel");
@@ -164,19 +187,19 @@ test("live text preserves the draft and final corrections never duplicate it", a
   assert.equal(h.ui.getEditorText(), "Existing draft: Hello, world! ");
 });
 
-test("cancellation rolls back the live preview and ignores late updates", async () => {
-  const h = setup();
+test("cancellation rolls back the live preview and ignores late updates", async (t) => {
+  const h = setup(t);
   h.ui.setEditorText("keep me");
   await start(h);
   h.transcript("temporary");
-  await h.commands.get("dictate").handler("cancel", h.ctx);
+  await cancel(h);
   assert.equal(h.ui.getEditorText(), "keep me");
   h.transcript("too late");
   assert.equal(h.ui.getEditorText(), "keep me");
 });
 
-test("manual prompt edits are not overwritten by later live updates or cleanup", async () => {
-  const h = setup();
+test("manual prompt edits are not overwritten by later live updates or cleanup", async (t) => {
+  const h = setup(t);
   await start(h);
   h.transcript("hello");
   h.ui.setEditorText("my independent edit");
@@ -187,8 +210,8 @@ test("manual prompt edits are not overwritten by later live updates or cleanup",
   assert.equal(h.calls.stopped, 1);
 });
 
-test("dashboard states reflect actual microphone data and finishing", async () => {
-  const h = setup();
+test("dashboard states reflect actual microphone data and finishing", async (t) => {
+  const h = setup(t);
   await start(h);
   const states = () => h.emitted.filter(([name]) => name === "mypi:dictation-changed").map(([, state]) => state);
   assert.deepEqual(states(), ["connecting"]);

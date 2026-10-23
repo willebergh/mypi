@@ -3,12 +3,12 @@ import { mkdtemp, mkdir, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import test from "node:test";
-import nestedAgents from "../extensions/nested-agents/index.ts";
+import { registerNestedAgents as nestedAgents } from "../extensions/nested/agents.ts";
 import {
   extractPathMentions,
   findApplicableAgentsFiles,
   pathsFromToolCall,
-} from "../extensions/nested-agents/core.ts";
+} from "../extensions/nested/agents-core.ts";
 
 async function fixture() {
   const root = await mkdtemp(path.join(os.tmpdir(), "nested-agents-"));

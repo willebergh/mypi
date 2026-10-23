@@ -151,19 +151,6 @@ export function registerDictation(pi: ExtensionAPI, dependencies = { startRecord
     }
   }
 
-  pi.registerCommand("dictate", {
-    description: "Start/stop dictation; /dictate cancel discards it",
-    handler: async (args, ctx) => {
-      if (args.trim() === "cancel") {
-        spaceHold?.cancel();
-        if (active) await dispose(active);
-      } else if (!args.trim()) {
-        await toggle(ctx);
-      } else {
-        ctx.ui.notify("Usage: /dictate [cancel]", "warning");
-      }
-    },
-  });
   pi.on("session_start", (_event, ctx) => {
     announceExtension(pi.events, { id: "dictation", label: "dictation" });
     publish("idle");

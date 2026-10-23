@@ -3,14 +3,16 @@ import { mkdtemp, mkdir, readFile, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import test from "node:test";
-import nestedMcp from "../extensions/nested-mcp/index.ts";
+import { registerNestedMcp as nestedMcp } from "../extensions/nested/mcp.ts";
 import {
   applicableMcpServers,
   discoverNestedMcp,
+  mcpApprovalHash,
   readMcpAutoApprovals,
+  readMcpConfig,
   resolveReferencedTargets,
   saveMcpAutoApproval,
-} from "../extensions/nested-mcp/core.ts";
+} from "../extensions/nested/mcp-core.ts";
 
 async function fixture() {
   const root = await mkdtemp(path.join(os.tmpdir(), "nested-mcp-"));
@@ -75,6 +77,40 @@ test("discovers scoped stdio, SSE, and HTTP servers and reports malformed defini
   );
   assert.equal(discovery.diagnostics.length, 1);
   assert.match(discovery.diagnostics[0]!.message, /args must be an array of strings/);
+});
+
+test("keeps legacy SSE defaults and rejects credentials in remote URLs", async () => {
+  const root = await fixture();
+  const file = path.join(root, ".mcp.json");
+  await writeFile(file, JSON.stringify({
+    mcpServers: {
+      legacy: { url: "https://example.com/sse" },
+      modern: { type: "streamable-http", url: "https://example.com/mcp" },
+      credentials: { type: "http", url: "https://user:password@example.com/mcp" },
+    },
+  }));
+  const result = await readMcpConfig(root, file);
+  assert.deepEqual(result.servers.map((server) => server.definition.type), ["sse", "http"]);
+  assert.equal(result.diagnostics.length, 1);
+  assert.match(result.diagnostics[0]!.message, /must not put credentials in its URL/);
+});
+
+test("approval hashes continue to bind stdio credentials and transport configuration", async () => {
+  const root = await fixture();
+  const discovery = await discoverNestedMcp(root);
+  const stdio = discovery.servers.find((server) => server.definition.type === "stdio")!;
+  assert.equal(stdio.definition.type, "stdio");
+  if (stdio.definition.type !== "stdio") return;
+  const changed = {
+    ...stdio,
+    definition: { ...stdio.definition, env: { TOKEN: "changed-test-value" } },
+  };
+  assert.notEqual(mcpApprovalHash(stdio), mcpApprovalHash(changed));
+  const remote = discovery.servers.find((server) => server.definition.type === "sse")!;
+  assert.notEqual(mcpApprovalHash(remote), mcpApprovalHash({
+    ...remote,
+    definition: { type: "http", url: "http://localhost:4321/__mcp/sse" },
+  }));
 });
 
 test("persists project-scoped MCP approvals", async () => {

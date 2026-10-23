@@ -3,7 +3,6 @@ import test, { type TestContext } from "node:test";
 import { getEventListeners } from "node:events";
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
 import askUserExtension from "../extensions/ask-user/index.ts";
-import { ASK_USER_VOICE_REQUEST_EVENT, type VoiceQuestionRequest } from "../extensions/ask-user/voice.ts";
 import {
   formatAskUserResult,
   normalizeQuestions,
@@ -101,29 +100,6 @@ test("normal cancellation formatting is unchanged", () => {
   assert.equal(formatAskUserResult({ questions: [], answers: [], cancelled: true }), "User cancelled the questionnaire");
 });
 
-test("interrupted tool results carry only confirmed answers and the actual new request", () => {
-  const userRequest = "Tell Pi to look at the image.\nWhat went wrong? /run $(not executed)";
-  const text = formatAskUserResult({
-    questions: normalizeQuestions([{ id: "first", question: "First?" }, { id: "next", question: "Next?" }]),
-    answers: [
-      { id: "first", question: "First?", skipped: false, answers: [{ label: "Green", custom: false }] },
-      { id: "next", question: "Next?", skipped: false, answers: [] },
-    ],
-    cancelled: true,
-    userRequest,
-  });
-  assert.equal(text, "Confirmed answers:\nfirst: Green\n" +
-    "Incomplete questionnaire interrupted; remaining questions are unanswered. No approval inferred for unanswered questions.\n" +
-    "New spoken user request: " + userRequest);
-  assert.doesNotMatch(text, /next:|hidden|history|steer/i);
-});
-
-test("new requests with no confirmed answers or after completion are explicit", () => {
-  const base = { questions: [], answers: [], userRequest: "Look at the image" };
-  assert.match(formatAskUserResult({ ...base, cancelled: true }), /^No confirmed answers\.\nIncomplete questionnaire interrupted/);
-  assert.match(formatAskUserResult({ ...base, cancelled: false }), /Questionnaire completed; no approval beyond the confirmed answers is inferred/);
-});
-
 function deferred<T>() {
   let resolve!: (value: T) => void;
   const promise = new Promise<T>((yes) => { resolve = yes; });
@@ -150,32 +126,29 @@ type Dialog = Awaited<ReturnType<CustomFactory>>;
 // Exercise the real custom factory, without a terminal. Like Pi, done can run
 // before the returned component is installed, and disposal can reenter it.
 function terminalHarness(options: {
-  voice?: (request: VoiceQuestionRequest) => void;
   beforeFactory?: () => void;
   onDone?: () => void;
+  failAfterFactory?: boolean;
+  questions?: RawQuestion[];
 } = {}) {
   let tool!: AskUserTool;
   let component: Dialog | undefined;
   let closed = false;
   let close!: (result: AskUserResult) => void;
   let uiCalls = 0;
-  let voiceCalls = 0;
   let doneCalls = 0;
   let renders = 0;
   const opened = deferred<void>();
   askUserExtension({
     on() {},
-    events: { emit(name: string, data: unknown) {
-      assert.equal(name, ASK_USER_VOICE_REQUEST_EVENT);
-      voiceCalls++;
-      options.voice?.(data as VoiceQuestionRequest);
-    } },
+    events: { emit() {} },
     registerTool(value: AskUserTool) { tool = value; },
   } as unknown as ExtensionAPI);
   const ctx = {
     mode: "tui",
     ui: { custom(factory: CustomFactory) {
       uiCalls++;
+      closed = false;
       return new Promise((resolve, reject) => {
         close = (result) => {
           doneCalls++;
@@ -197,17 +170,17 @@ function terminalHarness(options: {
         )).then((value) => {
           component = value;
           opened.resolve();
+          if (options.failAfterFactory) reject(new Error("UI failed"));
         }, reject);
       });
     } },
   } as unknown as ExtensionContext;
   return {
-    execute(signal?: AbortSignal) { return tool.execute("original-tool-call", { questions: terminalQuestions }, signal, undefined, ctx); },
+    execute(signal?: AbortSignal) { return tool.execute("original-tool-call", { questions: options.questions ?? terminalQuestions }, signal, undefined, ctx); },
     opened: opened.promise,
     get dialog() { assert.ok(component); return component; },
     get closed() { return closed; },
     get uiCalls() { return uiCalls; },
-    get voiceCalls() { return voiceCalls; },
     get doneCalls() { return doneCalls; },
     get renders() { return renders; },
     hostClose(result: AskUserResult) { close(result); },
@@ -235,16 +208,14 @@ function observeAbort(t: TestContext, signal: AbortSignal) {
 function assertCancellation(result: ToolResult, expected: AskUserResult) {
   assert.deepEqual(result.details, expected);
   assert.deepEqual(result.content, [{ type: "text", text: "User cancelled the questionnaire" }]);
-  assert.equal(result.details.userRequest, undefined);
 }
 
-test("pre-aborted ask_user never attempts voice or terminal UI", { timeout: 1000 }, async (t) => {
+test("pre-aborted ask_user never opens terminal UI", { timeout: 1000 }, async (t) => {
   const controller = new AbortController();
   controller.abort();
   const listeners = observeAbort(t, controller.signal);
   const h = terminalHarness();
   assertCancellation(await h.execute(controller.signal), emptyCancellation);
-  assert.equal(h.voiceCalls, 0);
   assert.equal(h.uiCalls, 0);
   assert.equal(h.doneCalls, 0);
   assert.equal(listeners.add.mock.callCount(), 0);
@@ -261,9 +232,7 @@ test("abort closes an already open dialog exactly like Esc; late keys cannot app
 
     const controller = new AbortController();
     const listeners = observeAbort(t, controller.signal);
-    const h = terminalHarness({ voice(request) {
-      assert.equal(request.claim(async () => undefined), true);
-    } });
+    const h = terminalHarness();
     const pending = h.execute(controller.signal);
     await h.opened;
     assert.equal(h.closed, false);
@@ -276,13 +245,12 @@ test("abort closes an already open dialog exactly like Esc; late keys cannot app
     const renders = h.renders;
     for (const key of ["\r", " ", "\x1b[B", "\x1b", "late answer", "\r"]) h.dialog.handleInput!(key);
     // Even a stale queued listener and repeated disposal cannot complete twice.
-    const callback = listeners.add.mock.calls[1].arguments[1] as EventListener;
+    const callback = listeners.add.mock.calls[0].arguments[1] as EventListener;
     callback(new Event("abort"));
     h.dialog.dispose?.();
     assert.equal(h.renders, renders);
     assert.equal(h.doneCalls, 1);
     assert.equal(h.uiCalls, 1);
-    assert.equal(h.voiceCalls, 1);
     assertCancellation(await pending, expected);
     listeners.assertCleaned();
   }
@@ -307,29 +275,6 @@ test("abort while editing free text cancels rather than submitting late text", {
   listeners.assertCleaned();
 });
 
-test("abort after async voice decline but before fallback cannot open a dialog", { timeout: 1000 }, async (t) => {
-  const controller = new AbortController();
-  const listeners = observeAbort(t, controller.signal);
-  const voice = deferred<AskUserResult | undefined>();
-  const h = terminalHarness({ voice(request) {
-    assert.strictEqual(request.signal, controller.signal);
-    assert.equal(request.claim(() => voice.promise), true);
-  } });
-  const pending = h.execute(controller.signal);
-  assert.equal(h.uiCalls, 0);
-  voice.resolve(undefined);
-  // Voice's finish runs first; execute's await continuation runs after this abort.
-  queueMicrotask(() => {
-    assert.equal(getEventListeners(controller.signal, "abort").length, 0);
-    controller.abort();
-  });
-  assertCancellation(await pending, emptyCancellation);
-  assert.equal(h.voiceCalls, 1);
-  assert.equal(h.uiCalls, 0);
-  assert.equal(h.doneCalls, 0);
-  listeners.assertCleaned();
-});
-
 test("callback-scope abort before factory initialization completes without hanging", { timeout: 1000 }, async (t) => {
   const controller = new AbortController();
   const listeners = observeAbort(t, controller.signal);
@@ -349,9 +294,9 @@ test("abort during listener registration is caught and cleaned even with reentra
     let calls = 0;
     t.mock.method(controller.signal, "addEventListener", (...args: Parameters<AbortSignal["addEventListener"]>) => {
       calls++;
-      if (calls === 2 && phase === "before-add") controller.abort();
+      if (calls === 1 && phase === "before-add") controller.abort();
       originalAdd(...args);
-      if (calls === 2 && phase === "after-add") controller.abort();
+      if (calls === 1 && phase === "after-add") controller.abort();
     });
     const remove = t.mock.method(controller.signal, "removeEventListener");
     const h = terminalHarness({ onDone() { controller.signal.dispatchEvent(new Event("abort")); } });
@@ -359,8 +304,8 @@ test("abort during listener registration is caught and cleaned even with reentra
     assert.equal(result.details.cancelled, true);
     assert.ok(result.details.answers.every((answer) => answer.answers.length === 0));
     assert.equal(h.doneCalls, 1);
-    assert.equal(calls, 2);
-    assert.equal(remove.mock.callCount(), 2); // Voice and terminal, once each.
+    assert.equal(calls, 1);
+    assert.equal(remove.mock.callCount(), 1);
     assert.equal(getEventListeners(controller.signal, "abort").length, 0);
   }
 });
@@ -403,7 +348,7 @@ test("normal completion, Esc, and external disposal remove the terminal abort li
     h.dialog.handleInput!("\x1b");
     assert.equal(h.doneCalls, 1);
     assert.equal(h.uiCalls, 1);
-    assert.equal(listeners.add.mock.callCount(), 2);
+    assert.equal(listeners.add.mock.callCount(), 1);
     listeners.assertCleaned();
   }
 });

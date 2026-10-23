@@ -3,13 +3,13 @@ import { mkdtemp, mkdir, realpath, symlink, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import test from "node:test";
-import monorepoSkills from "../extensions/monorepo-skills/index.ts";
+import { registerNestedSkills as monorepoSkills } from "../extensions/nested/skills.ts";
 import {
   discoverMonorepoSkills,
   findRepositoryRoot,
   readSkillName,
   skillsFromSettings,
-} from "../extensions/monorepo-skills/core.ts";
+} from "../extensions/nested/skills-core.ts";
 
 async function makeSkill(directory: string, name: string): Promise<string> {
   await mkdir(directory, { recursive: true });
